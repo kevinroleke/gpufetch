@@ -3,8 +3,14 @@
 
 import argparse
 import re
+import select
 import shutil
+import signal
 import subprocess
+import sys
+import time
+import tty
+import termios
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -53,6 +59,10 @@ GPU_ART_GENERIC = r"""
  |  '---'         |__|  PCIe x16        |_|  |
  |___________________________________________|
 """.strip().splitlines()
+
+ART_ROWS = len(GPU_ART_NVIDIA)   # all templates share the same height
+SPINNER  = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+FPS      = 12                    # target frames per second
 
 # ANSI colours
 RESET  = "\033[0m"
@@ -114,8 +124,8 @@ def rainbowize(text: str) -> str:
             if m:
                 seq = m.group()
                 inner = seq[2:-1]
-                # keep only bold (1) and dim (2); drop colour codes
-                kept = [p for p in inner.split(";") if p in ("1", "2")]
+                # keep only bold (1), dim (2), reverse (7); drop colour codes
+                kept = [p for p in inner.split(";") if p in ("1", "2", "7")]
                 if kept:
                     result.append(f"\033[{';'.join(kept)}m")
                 i += len(seq)
@@ -316,11 +326,12 @@ def _temp_colour(t: int) -> str:
     return RED
 
 
-def render_card(gpu: GPUInfo, card_width: int) -> list[str]:
+def render_card(gpu: GPUInfo, card_width: int, scan_row: int = -1) -> list[str]:
     """
     Return a list of text lines representing one GPU card.
     Each line is exactly `card_width` visible characters wide
     (may contain ANSI escape sequences).
+    scan_row: which art row index to highlight as a scanline (-1 = none).
     """
     colour = VENDOR_COLOURS.get(gpu.vendor, WHITE)
     inner = card_width - 2  # subtract border chars
@@ -365,10 +376,14 @@ def render_card(gpu: GPUInfo, card_width: int) -> list[str]:
     # ── ASCII art (centred, clipped to inner width)
     art_lines = gpu.art
     art_w = max(len(l) for l in art_lines) if art_lines else 0
-    for art_line in art_lines:
+    for i, art_line in enumerate(art_lines):
         pad_left = max(0, (inner - art_w) // 2)
         clipped = art_line[:inner - pad_left]
-        coloured = f"{colour}{clipped}{RESET}"
+        if i == scan_row:
+            # scanline: reverse-video flash across this row
+            coloured = f"\033[7m{colour}{clipped}{RESET}"
+        else:
+            coloured = f"{colour}{clipped}{RESET}"
         lines.append(border_row(" " * pad_left + coloured))
 
     lines.append(border_row(f"{colour}{'─' * inner}{RESET}"))
@@ -442,14 +457,19 @@ def compute_grid(n_gpus: int, term_cols: int) -> tuple[int, int]:
     return best_cols, best_w
 
 
-def render_grid(gpus: list[GPUInfo], term_cols: int) -> str:
+def render_grid(gpus: list[GPUInfo], term_cols: int, frame: int = 0) -> str:
     if not gpus:
         return f"{YELLOW}No GPUs detected.{RESET}\n"
 
     cols, card_w = compute_grid(len(gpus), term_cols)
 
-    # Render each card
-    rendered = [render_card(g, card_w) for g in gpus]
+    # Scanline sweeps through art rows, pauses, then repeats.
+    # Cycle: ART_ROWS rows × 4 frames each, then 16 frames of no highlight.
+    cycle = ART_ROWS * 4 + 16
+    phase = frame % cycle
+    scan_row = phase // 4 if phase < ART_ROWS * 4 else -1
+
+    rendered = [render_card(g, card_w, scan_row) for g in gpus]
 
     output_lines: list[str] = []
 
@@ -472,10 +492,11 @@ def render_grid(gpus: list[GPUInfo], term_cols: int) -> str:
 
 # ── Header ───────────────────────────────────────────────────────────────────
 
-def render_header(gpus: list[GPUInfo], term_cols: int) -> str:
+def render_header(gpus: list[GPUInfo], term_cols: int, frame: int = 0) -> str:
     n = len(gpus)
     noun = "GPU" if n == 1 else "GPUs"
-    title = f" lsgpu — {n} {noun} detected "
+    spin = SPINNER[frame % len(SPINNER)]
+    title = f" {spin} lsgpu — {n} {noun} detected {spin} "
     pad = max(0, term_cols - len(title)) // 2
     line = "─" * term_cols
     return (
@@ -483,6 +504,111 @@ def render_header(gpus: list[GPUInfo], term_cols: int) -> str:
         f"{' ' * pad}{BOLD}{CYAN}{title}{RESET}\n"
         f"{CYAN}{line}{RESET}\n"
     )
+
+
+def render_footer(term_cols: int, last_poll_ago: float) -> str:
+    age = f"{last_poll_ago:.1f}s ago"
+    dot = f"{GREEN}●{RESET}"
+    hint = f"{DIM}[q / ESC / Ctrl-C]{RESET} quit"
+    body = f" {dot} {BOLD}LIVE{RESET}  updated {age}   {hint} "
+    pad = max(0, term_cols - len(_strip_ansi(body)))
+    line = "─" * term_cols
+    return (
+        f"{CYAN}{line}{RESET}\n"
+        f"{body}{' ' * pad}\n"
+    )
+
+
+# ── TUI ───────────────────────────────────────────────────────────────────────
+
+def _read_key(timeout: float) -> str:
+    """Return the next keypress within `timeout` seconds, or ''."""
+    if not select.select([sys.stdin], [], [], timeout)[0]:
+        return ""
+    ch = sys.stdin.read(1)
+    if ch == "\x1b":
+        # Drain any escape sequence that follows (arrow keys etc.)
+        while select.select([sys.stdin], [], [], 0.02)[0]:
+            sys.stdin.read(1)
+    return ch
+
+
+def run_tui(rainbow: bool) -> None:
+    """Full-screen animated TUI. Exits on q / ESC / Ctrl-C."""
+    fd   = sys.stdin.fileno()
+    old  = termios.tcgetattr(fd)
+
+    # Alternate screen + hide cursor
+    sys.stdout.write("\033[?1049h\033[?25l\033[2J")
+    sys.stdout.flush()
+
+    resized = False
+    def _on_resize(sig, _frame):
+        nonlocal resized
+        resized = True
+    signal.signal(signal.SIGWINCH, _on_resize)
+
+    frame        = 0
+    gpus: list[GPUInfo] = []
+    last_poll    = 0.0
+    poll_age     = 0.0
+
+    try:
+        tty.setraw(fd)
+
+        while True:
+            now = time.monotonic()
+
+            if now - last_poll >= 1.0:
+                gpus      = collect_gpus()
+                last_poll = now
+
+            poll_age = time.monotonic() - last_poll
+            term     = shutil.get_terminal_size()
+
+            # ── build frame ──────────────────────────────────────────────────
+            header = render_header(gpus, term.columns, frame)
+            grid   = render_grid(gpus, term.columns, frame)
+            footer = render_footer(term.columns, poll_age)
+
+            if rainbow:
+                header = rainbowize(header)
+                grid   = rainbowize(grid)
+                footer = rainbowize(footer)
+
+            main_block = header + grid
+
+            # Pin footer to the last two rows of the terminal.
+            # \033[{r};1H  = move cursor to row r, column 1 (1-based)
+            footer_row = term.lines - 1   # leave 2 rows for the footer
+
+            output = (
+                "\033[H"                                    # cursor home
+                + main_block
+                + f"\033[J"                                 # clear below main block
+                + f"\033[{footer_row};1H"                   # jump to footer row
+                + footer
+            )
+
+            # In raw mode \n is bare LF (no CR); fix every newline → \r\n
+            sys.stdout.write(output.replace("\r\n", "\n").replace("\n", "\r\n"))
+            sys.stdout.flush()
+
+            frame += 1
+
+            # ── input / timing ───────────────────────────────────────────────
+            ch = _read_key(1.0 / FPS)
+            if ch in ("q", "Q", "\x03", "\x1b"):   # q / Ctrl-C / ESC
+                break
+
+    except KeyboardInterrupt:
+        pass
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        # Leave alternate screen, restore cursor
+        sys.stdout.write("\033[?1049l\033[?25h\033[0m")
+        sys.stdout.flush()
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -493,15 +619,16 @@ def main() -> None:
                         help="Paint output in glorious rainbow colours")
     args = parser.parse_args()
 
-    term = shutil.get_terminal_size(fallback=(80, 24))
-    term_cols = term.columns
-
-    gpus = collect_gpus()
-
-    output = render_header(gpus, term_cols) + render_grid(gpus, term_cols)
-    if args.rainbow:
-        output = rainbowize(output)
-    print(output, end="")
+    if sys.stdout.isatty():
+        run_tui(args.rainbow)
+    else:
+        # Non-interactive (piped/redirected): plain one-shot output
+        term = shutil.get_terminal_size(fallback=(80, 24))
+        gpus = collect_gpus()
+        output = render_header(gpus, term.columns) + render_grid(gpus, term.columns)
+        if args.rainbow:
+            output = rainbowize(output)
+        print(output, end="")
 
 
 if __name__ == "__main__":
