@@ -21,6 +21,7 @@ from themes import THEME_REGISTRY
 from themes.base import Theme
 from entities import ENTITY_REGISTRY
 from entities.base import EntitySpec, Entity, spawn, overlay
+from spotify import SpotifyClient, SpotifyPoller
 
 
 # ── GPU ASCII art templates ───────────────────────────────────────────────────
@@ -331,6 +332,63 @@ def render_footer(term_cols: int, last_poll_ago: float) -> str:
     return f"{CYAN}{line}{RESET}\n{body}{' ' * pad}\n"
 
 
+def render_spotify_widget(
+    track: "dict | None",
+    connected: bool,
+    term_cols: int,
+) -> str:
+    colour = GREEN
+    width  = min(54, term_cols)
+    inner  = width - 2
+
+    def top():
+        return f"{colour}╔{'═' * inner}╗{RESET}"
+    def bot():
+        return f"{colour}╚{'═' * inner}╝{RESET}"
+    def row(content: str):
+        vis = len(strip_ansi(content))
+        pad = max(0, inner - vis)
+        return f"{colour}║{RESET}{content[:inner]}{' ' * pad}{colour}║{RESET}"
+
+    lines = [top(), row(f" {GREEN}♫  SPOTIFY{RESET}"),
+             row(f"{colour}{'─' * inner}{RESET}")]
+
+    if not connected:
+        lines += [
+            row(f"  {DIM}Not connected{RESET}"),
+            row(f"  {DIM}Use /connect-spotify to authenticate{RESET}"),
+        ]
+    elif track is None:
+        lines.append(row(f"  {DIM}Nothing playing{RESET}"))
+    else:
+        title  = track["title"]
+        artist = track["artist"]
+        album  = track["album"]
+        prog   = track["progress_ms"]
+        dur    = track["duration_ms"]
+
+        max_t = inner - 3
+        if len(title)  > max_t: title  = title[:max_t - 1]  + "…"
+        if len(artist) > max_t: artist = artist[:max_t - 1] + "…"
+        if len(album)  > max_t: album  = album[:max_t - 1]  + "…"
+
+        status = "▶" if track["is_playing"] else "⏸"
+        lines.append(row(f"  {BOLD}{status} {title}{RESET}"))
+        lines.append(row(f"  {DIM}{artist}{RESET}"))
+        if album:
+            lines.append(row(f"  {DIM}{album}{RESET}"))
+
+        bar_w   = max(4, inner - 16)
+        filled  = int((prog / dur) * bar_w)
+        bar     = f"{GREEN}{'█' * filled}{'░' * (bar_w - filled)}{RESET}"
+        p_str   = f"{prog // 60000}:{(prog // 1000) % 60:02d}"
+        d_str   = f"{dur  // 60000}:{(dur  // 1000) % 60:02d}"
+        lines.append(row(f"  {bar} {DIM}{p_str}/{d_str}{RESET}"))
+
+    lines.append(bot())
+    return "\n".join(lines) + "\n"
+
+
 def render_cmd_footer(term_cols: int, cmd_buf: str, error: str = "") -> str:
     line = f"{CYAN}{'─' * term_cols}{RESET}"
     if error:
@@ -418,14 +476,24 @@ def execute_command(
     entities: list[Entity],
     entity_specs: list[EntitySpec],
     fire_enabled: bool,
+    spotify_enabled: bool,
     term_cols: int,
     term_lines: int,
-) -> "tuple[Theme, list[Entity], list[EntitySpec], bool] | str":
+) -> "tuple[Theme, list[Entity], list[EntitySpec], bool, bool] | str":
     """Parse and execute a TUI command. Returns updated state tuple or error string."""
     parts = cmd.split()
     if not parts:
-        return (theme, entities, entity_specs, fire_enabled)
+        return (theme, entities, entity_specs, fire_enabled, spotify_enabled)
     name = parts[0].lower()
+
+    def _ok(**kw):
+        return (
+            kw.get("theme",           theme),
+            kw.get("entities",        entities),
+            kw.get("entity_specs",    entity_specs),
+            kw.get("fire_enabled",    fire_enabled),
+            kw.get("spotify_enabled", spotify_enabled),
+        )
 
     if name == "change-theme":
         if len(parts) < 2:
@@ -433,23 +501,23 @@ def execute_command(
         t = parts[1]
         if t not in THEME_REGISTRY:
             return f"unknown theme {t!r}  known: {', '.join(THEME_REGISTRY)}"
-        return (THEME_REGISTRY[t], entities, entity_specs, fire_enabled)
+        return _ok(theme=THEME_REGISTRY[t])
 
     elif name == "change-theme-random":
-        return (random.choice(list(THEME_REGISTRY.values())), entities, entity_specs, fire_enabled)
+        return _ok(theme=random.choice(list(THEME_REGISTRY.values())))
 
     elif name == "killall":
-        return (theme, [], [], fire_enabled)
+        return _ok(entities=[], entity_specs=[])
 
     elif name == "kill":
         if len(parts) < 2:
             return "usage: kill <entity-name>"
-        target = parts[1]
+        target    = parts[1]
         new_ents  = [e for e in entities     if e.spec.name != target]
         new_specs = [s for s in entity_specs if s.name      != target]
         if len(new_ents) == len(entities):
             return f"no live entity named {target!r}"
-        return (theme, new_ents, new_specs, fire_enabled)
+        return _ok(entities=new_ents, entity_specs=new_specs)
 
     elif name == "spawn":
         if len(parts) < 2:
@@ -463,21 +531,29 @@ def execute_command(
                 qty = max(1, int(parts[2]))
             except ValueError:
                 return f"invalid quantity {parts[2]!r}"
-        spec = ENTITY_REGISTRY[ent_name]
-        new_ents  = entities + [
+        spec     = ENTITY_REGISTRY[ent_name]
+        new_ents = entities + [
             spawn(spec, term_cols, term_lines, phase=i * 7) for i in range(qty)
         ]
-        new_specs = entity_specs + [spec] * qty
-        return (theme, new_ents, new_specs, fire_enabled)
+        return _ok(entities=new_ents, entity_specs=entity_specs + [spec] * qty)
 
     elif name == "fire":
         if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
             return "usage: fire <on|off>"
-        return (theme, entities, entity_specs, parts[1].lower() == "on")
+        return _ok(fire_enabled=parts[1].lower() == "on")
+
+    elif name == "spotify":
+        if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
+            return "usage: spotify <on|off>"
+        return _ok(spotify_enabled=parts[1].lower() == "on")
+
+    elif name == "connect-spotify":
+        return "__CONNECT_SPOTIFY__"
 
     else:
         return (f"unknown command {name!r}  "
-                "try: change-theme, change-theme-random, killall, kill, spawn, fire")
+                "try: change-theme, change-theme-random, killall, kill, "
+                "spawn, fire, spotify, connect-spotify")
 
 
 def _read_key(fd: int, timeout: float) -> str:
@@ -496,28 +572,53 @@ def _read_key(fd: int, timeout: float) -> str:
         return ""
 
 
+def _tui_exit(fd: int, old_term) -> None:
+    termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
+    sys.stdout.write("\033[?1049l\033[?25h\033[0m")
+    sys.stdout.flush()
+
+
+def _tui_enter(fd: int) -> None:
+    sys.stdout.write("\033[?1049h\033[?25l\033[2J")
+    sys.stdout.flush()
+    tty.setraw(fd)
+
+
 def run_tui(theme: Theme, entity_specs: list[EntitySpec],
-            fire_enabled: bool = False) -> None:
+            fire_enabled: bool = False,
+            spotify_enabled: bool = False) -> None:
     fd  = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
 
-    sys.stdout.write("\033[?1049h\033[?25l\033[2J")
-    sys.stdout.flush()
+    _tui_enter(fd)
     signal.signal(signal.SIGWINCH, lambda *_: None)
 
-    frame     = 0
+    frame           = 0
     gpus: list[GPUInfo]    = []
     entities: list[Entity] = []
-    last_poll  = 0.0
-    spawned    = False
-    cmd_mode   = False
-    cmd_buf    = ""
-    cmd_error  = ""
+    last_poll       = 0.0
+    spawned         = False
+    cmd_mode        = False
+    cmd_buf         = ""
+    cmd_error       = ""
     fire_buf: list[list[float]] = []
-    fire_width = 0
+    fire_width      = 0
+
+    spotify_client  = SpotifyClient()
+    spotify_poller: "SpotifyPoller | None" = None
+
+    def _ensure_poller():
+        nonlocal spotify_poller
+        if spotify_enabled and spotify_poller is None:
+            spotify_poller = SpotifyPoller(spotify_client)
+
+    def _stop_poller():
+        nonlocal spotify_poller
+        if spotify_poller is not None:
+            spotify_poller.stop()
+            spotify_poller = None
 
     try:
-        tty.setraw(fd)
         while True:
             now  = time.monotonic()
             term = shutil.get_terminal_size()
@@ -527,7 +628,6 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                             for i, spec in enumerate(entity_specs)]
                 spawned = True
 
-            # (Re)init fire buffer if fire is on and width changed
             if fire_enabled and (not fire_buf or fire_width != term.columns):
                 fire_buf   = fire_init(term.columns)
                 fire_width = term.columns
@@ -539,21 +639,29 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             if fire_enabled and fire_buf:
                 fire_step(fire_buf)
 
+            _ensure_poller()
+            if not spotify_enabled:
+                _stop_poller()
+
+            track = spotify_poller.get() if spotify_poller else None
+
             poll_age = time.monotonic() - last_poll
             header   = theme.apply(render_header(gpus, term.columns, frame), frame)
             grid     = theme.apply(render_grid(gpus,   term.columns, frame), frame)
+
+            if spotify_enabled:
+                spotify_box = render_spotify_widget(
+                    track, spotify_client.is_connected(), term.columns
+                )
+            else:
+                spotify_box = ""
+
             if cmd_mode:
                 footer = render_cmd_footer(term.columns, cmd_buf, cmd_error)
             else:
                 footer = theme.apply(render_footer(term.columns, poll_age), frame)
 
-            # Write order: grid → fire (bottom rows) → footer + entities on top.
-            # Fire uses cursor-positioning only (no \n), so skip the \r\n fixup.
-            grid_part = (
-                "\033[H"
-                + header + grid
-                + "\033[J"
-            )
+            grid_part = "\033[H" + header + grid + spotify_box + "\033[J"
             footer_part = (
                 f"\033[{term.lines - 1};1H"
                 + footer
@@ -572,31 +680,38 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             ch = _read_key(fd, 1.0 / FPS)
 
             if cmd_mode:
-                if ch in ("\r", "\n"):              # Enter — execute
+                if ch in ("\r", "\n"):
                     result = execute_command(
                         cmd_buf.strip(), theme, entities, entity_specs,
-                        fire_enabled, term.columns, term.lines,
+                        fire_enabled, spotify_enabled, term.columns, term.lines,
                     )
-                    if isinstance(result, str):     # error message
+                    if result == "__CONNECT_SPOTIFY__":
+                        # Temporarily leave TUI, run OAuth, come back
+                        _tui_exit(fd, old)
+                        ok, msg = spotify_client.connect()
+                        print(f"\n{msg}")
+                        input("\nPress Enter to return to lsgpu…")
+                        old = termios.tcgetattr(fd)
+                        _tui_enter(fd)
+                        cmd_mode = False
+                        cmd_buf  = cmd_error = ""
+                    elif isinstance(result, str):
                         cmd_error = result
                         cmd_buf   = ""
                     else:
-                        theme, entities, entity_specs, fire_enabled = result
-                        # Reinit fire buffer if just toggled on
+                        theme, entities, entity_specs, fire_enabled, spotify_enabled = result
                         if fire_enabled and (not fire_buf or fire_width != term.columns):
                             fire_buf   = fire_init(term.columns)
                             fire_width = term.columns
-                        cmd_mode  = False
-                        cmd_buf   = ""
-                        cmd_error = ""
-                elif ch == "\x1b":                  # Escape — cancel
-                    cmd_mode  = False
-                    cmd_buf   = ""
-                    cmd_error = ""
-                elif ch in ("\x7f", "\x08"):        # Backspace
+                        cmd_mode = False
+                        cmd_buf  = cmd_error = ""
+                elif ch == "\x1b":
+                    cmd_mode = False
+                    cmd_buf  = cmd_error = ""
+                elif ch in ("\x7f", "\x08"):
                     cmd_buf   = cmd_buf[:-1]
                     cmd_error = ""
-                elif ch == "\x15":                  # Ctrl-U — clear line
+                elif ch == "\x15":
                     cmd_buf   = ""
                     cmd_error = ""
                 elif ch and ch.isprintable():
@@ -606,16 +721,14 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                 if ch in ("q", "Q", "\x03", "\x1b"):
                     break
                 elif ch == "/":
-                    cmd_mode  = True
-                    cmd_buf   = ""
-                    cmd_error = ""
+                    cmd_mode = True
+                    cmd_buf  = cmd_error = ""
 
     except KeyboardInterrupt:
         pass
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        sys.stdout.write("\033[?1049l\033[?25h\033[0m")
-        sys.stdout.flush()
+        _stop_poller()
+        _tui_exit(fd, old)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -636,6 +749,10 @@ def main() -> None:
                         help="spawn N randomly chosen entities")
     parser.add_argument("--fire", action="store_true",
                         help="enable fire animation along the bottom of the screen")
+    parser.add_argument("--connect-spotify", action="store_true",
+                        help="run Spotify OAuth flow and save credentials, then exit")
+    parser.add_argument("--spotify", action="store_true",
+                        help="show Spotify now-playing widget")
     args = parser.parse_args()
 
     theme = THEME_REGISTRY.get(args.theme)
@@ -653,8 +770,15 @@ def main() -> None:
         entity_specs += random.choices(list(ENTITY_REGISTRY.values()),
                                        k=args.entities_random)
 
+    if args.connect_spotify:
+        ok, msg = SpotifyClient().connect()
+        print(msg)
+        sys.exit(0 if ok else 1)
+
     if sys.stdout.isatty():
-        run_tui(theme, entity_specs, fire_enabled=args.fire)
+        run_tui(theme, entity_specs,
+                fire_enabled=args.fire,
+                spotify_enabled=args.spotify)
     else:
         term   = shutil.get_terminal_size(fallback=(80, 24))
         gpus   = collect_gpus()
