@@ -2,6 +2,7 @@
 """lsgpu — list connected GPUs in a terminal grid with ASCII art."""
 
 import argparse
+import os
 import random
 import re
 import select
@@ -340,6 +341,75 @@ def render_cmd_footer(term_cols: int, cmd_buf: str, error: str = "") -> str:
     return f"{line}\n{body}{' ' * pad}\n"
 
 
+# ── Fire effect ───────────────────────────────────────────────────────────────
+
+FIRE_ROWS   = 5          # terminal rows consumed at the bottom of the screen
+_FIRE_PROWS = FIRE_ROWS * 2   # pixel-rows (▄ gives 2 per terminal row)
+_FIRE_COOL  = 50.0       # cooling per step — must be high enough to reach 0 over ~8 rows
+
+
+def _fire_rgb(v: int) -> tuple[int, int, int]:
+    v = max(0, min(255, v))
+    if v < 85:
+        return (v * 3, 0, 0)
+    elif v < 170:
+        return (255, (v - 85) * 3, 0)
+    else:
+        return (255, 255, (v - 170) * 3)
+
+
+def fire_init(width: int) -> list[list[float]]:
+    w   = max(1, width)
+    buf = [[0.0] * w for _ in range(_FIRE_PROWS)]
+    buf[-1] = [255.0] * w
+    buf[-2] = [220.0] * w
+    return buf
+
+
+def fire_step(buf: list[list[float]]) -> None:
+    h, w = len(buf), len(buf[0])
+    for y in range(h - 2):
+        for x in range(w):
+            v = (buf[y + 1][x] +
+                 buf[y + 1][(x - 1) % w] +
+                 buf[y + 1][(x + 1) % w] +
+                 buf[y + 2][x]) / 4.0
+            v -= random.random() * _FIRE_COOL
+            buf[y][x] = max(0.0, v)
+    # Randomise the source row so distinct flame tongues form
+    for x in range(w):
+        buf[-1][x] = 210.0 + random.random() * 45.0
+        buf[-2][x] = 160.0 + random.random() * 60.0
+
+
+def fire_render(buf: list[list[float]], term_cols: int, term_lines: int) -> str:
+    """Return cursor-positioned escape sequences for the fire strip.
+
+    Deduplicates consecutive cells with the same colour pair to keep output
+    small (~5-10× reduction vs naïve per-cell sequences).
+    """
+    w   = min(term_cols, len(buf[0]))
+    out = []
+    for row in range(FIRE_ROWS):
+        term_row = term_lines - FIRE_ROWS + row + 1   # 1-indexed
+        out.append(f"\033[{term_row};1H")
+        py_top  = row * 2
+        py_bot  = row * 2 + 1
+        last_bg = last_fg = None
+        for x in range(w):
+            bg = _fire_rgb(int(buf[py_top][x]))
+            fg = _fire_rgb(int(buf[py_bot][x]))
+            if bg != last_bg:
+                out.append(f"\033[48;2;{bg[0]};{bg[1]};{bg[2]}m")
+                last_bg = bg
+            if fg != last_fg:
+                out.append(f"\033[38;2;{fg[0]};{fg[1]};{fg[2]}m")
+                last_fg = fg
+            out.append("\u2584")
+        out.append("\033[0m")
+    return "".join(out)
+
+
 # ── TUI ───────────────────────────────────────────────────────────────────────
 
 def execute_command(
@@ -347,13 +417,14 @@ def execute_command(
     theme: Theme,
     entities: list[Entity],
     entity_specs: list[EntitySpec],
+    fire_enabled: bool,
     term_cols: int,
     term_lines: int,
-) -> "tuple[Theme, list[Entity], list[EntitySpec]] | str":
+) -> "tuple[Theme, list[Entity], list[EntitySpec], bool] | str":
     """Parse and execute a TUI command. Returns updated state tuple or error string."""
     parts = cmd.split()
     if not parts:
-        return (theme, entities, entity_specs)
+        return (theme, entities, entity_specs, fire_enabled)
     name = parts[0].lower()
 
     if name == "change-theme":
@@ -362,13 +433,13 @@ def execute_command(
         t = parts[1]
         if t not in THEME_REGISTRY:
             return f"unknown theme {t!r}  known: {', '.join(THEME_REGISTRY)}"
-        return (THEME_REGISTRY[t], entities, entity_specs)
+        return (THEME_REGISTRY[t], entities, entity_specs, fire_enabled)
 
     elif name == "change-theme-random":
-        return (random.choice(list(THEME_REGISTRY.values())), entities, entity_specs)
+        return (random.choice(list(THEME_REGISTRY.values())), entities, entity_specs, fire_enabled)
 
     elif name == "killall":
-        return (theme, [], [])
+        return (theme, [], [], fire_enabled)
 
     elif name == "kill":
         if len(parts) < 2:
@@ -378,7 +449,7 @@ def execute_command(
         new_specs = [s for s in entity_specs if s.name      != target]
         if len(new_ents) == len(entities):
             return f"no live entity named {target!r}"
-        return (theme, new_ents, new_specs)
+        return (theme, new_ents, new_specs, fire_enabled)
 
     elif name == "spawn":
         if len(parts) < 2:
@@ -397,24 +468,36 @@ def execute_command(
             spawn(spec, term_cols, term_lines, phase=i * 7) for i in range(qty)
         ]
         new_specs = entity_specs + [spec] * qty
-        return (theme, new_ents, new_specs)
+        return (theme, new_ents, new_specs, fire_enabled)
+
+    elif name == "fire":
+        if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
+            return "usage: fire <on|off>"
+        return (theme, entities, entity_specs, parts[1].lower() == "on")
 
     else:
         return (f"unknown command {name!r}  "
-                "try: change-theme, change-theme-random, killall, kill, spawn")
+                "try: change-theme, change-theme-random, killall, kill, spawn, fire")
 
 
-def _read_key(timeout: float) -> str:
-    if not select.select([sys.stdin], [], [], timeout)[0]:
+def _read_key(fd: int, timeout: float) -> str:
+    """Read one keypress from raw fd, bypassing Python's buffered IO."""
+    if not select.select([fd], [], [], timeout)[0]:
         return ""
-    ch = sys.stdin.read(1)
-    if ch == "\x1b":
-        while select.select([sys.stdin], [], [], 0.02)[0]:
-            sys.stdin.read(1)
-    return ch
+    data = os.read(fd, 1)
+    if data == b"\x1b":
+        # Drain the rest of any escape sequence (arrow keys etc.)
+        while select.select([fd], [], [], 0.02)[0]:
+            os.read(fd, 32)
+        return "\x1b"
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
 
 
-def run_tui(theme: Theme, entity_specs: list[EntitySpec]) -> None:
+def run_tui(theme: Theme, entity_specs: list[EntitySpec],
+            fire_enabled: bool = False) -> None:
     fd  = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
 
@@ -425,11 +508,13 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec]) -> None:
     frame     = 0
     gpus: list[GPUInfo]    = []
     entities: list[Entity] = []
-    last_poll = 0.0
-    spawned   = False
-    cmd_mode  = False
-    cmd_buf   = ""
-    cmd_error = ""
+    last_poll  = 0.0
+    spawned    = False
+    cmd_mode   = False
+    cmd_buf    = ""
+    cmd_error  = ""
+    fire_buf: list[list[float]] = []
+    fire_width = 0
 
     try:
         tty.setraw(fd)
@@ -442,9 +527,17 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec]) -> None:
                             for i, spec in enumerate(entity_specs)]
                 spawned = True
 
+            # (Re)init fire buffer if fire is on and width changed
+            if fire_enabled and (not fire_buf or fire_width != term.columns):
+                fire_buf   = fire_init(term.columns)
+                fire_width = term.columns
+
             if now - last_poll >= 1.0:
                 gpus      = collect_gpus()
                 last_poll = now
+
+            if fire_enabled and fire_buf:
+                fire_step(fire_buf)
 
             poll_age = time.monotonic() - last_poll
             header   = theme.apply(render_header(gpus, term.columns, frame), frame)
@@ -454,34 +547,45 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec]) -> None:
             else:
                 footer = theme.apply(render_footer(term.columns, poll_age), frame)
 
-            output = (
+            # Write order: grid → fire (bottom rows) → footer + entities on top.
+            # Fire uses cursor-positioning only (no \n), so skip the \r\n fixup.
+            grid_part = (
                 "\033[H"
                 + header + grid
                 + "\033[J"
-                + f"\033[{term.lines - 1};1H"
+            )
+            footer_part = (
+                f"\033[{term.lines - 1};1H"
                 + footer
                 + overlay(entities, frame)
             )
-            sys.stdout.write(output.replace("\r\n", "\n").replace("\n", "\r\n"))
+            sys.stdout.write(grid_part.replace("\r\n", "\n").replace("\n", "\r\n"))
+            if fire_enabled and fire_buf:
+                sys.stdout.write(fire_render(fire_buf, term.columns, term.lines))
+            sys.stdout.write(footer_part.replace("\r\n", "\n").replace("\n", "\r\n"))
             sys.stdout.flush()
 
             for e in entities:
                 e.tick(term.columns, term.lines)
             frame += 1
 
-            ch = _read_key(1.0 / FPS)
+            ch = _read_key(fd, 1.0 / FPS)
 
             if cmd_mode:
                 if ch in ("\r", "\n"):              # Enter — execute
                     result = execute_command(
                         cmd_buf.strip(), theme, entities, entity_specs,
-                        term.columns, term.lines,
+                        fire_enabled, term.columns, term.lines,
                     )
                     if isinstance(result, str):     # error message
                         cmd_error = result
                         cmd_buf   = ""
                     else:
-                        theme, entities, entity_specs = result
+                        theme, entities, entity_specs, fire_enabled = result
+                        # Reinit fire buffer if just toggled on
+                        if fire_enabled and (not fire_buf or fire_width != term.columns):
+                            fire_buf   = fire_init(term.columns)
+                            fire_width = term.columns
                         cmd_mode  = False
                         cmd_buf   = ""
                         cmd_error = ""
@@ -530,6 +634,8 @@ def main() -> None:
                         help="comma-separated entity names to bounce on screen")
     parser.add_argument("--entities-random", type=int, default=0, metavar="N",
                         help="spawn N randomly chosen entities")
+    parser.add_argument("--fire", action="store_true",
+                        help="enable fire animation along the bottom of the screen")
     args = parser.parse_args()
 
     theme = THEME_REGISTRY.get(args.theme)
@@ -548,7 +654,7 @@ def main() -> None:
                                        k=args.entities_random)
 
     if sys.stdout.isatty():
-        run_tui(theme, entity_specs)
+        run_tui(theme, entity_specs, fire_enabled=args.fire)
     else:
         term   = shutil.get_terminal_size(fallback=(80, 24))
         gpus   = collect_gpus()
