@@ -304,14 +304,14 @@ def render_card(gpu: GPUInfo, card_width: int) -> list[str]:
     for art_line in art_lines:
         pad_left = max(0, (inner - art_w) // 2)
         clipped = art_line[:inner - pad_left]
-        coloured = f"{DIM}{colour}{clipped}{RESET}"
+        coloured = f"{colour}{clipped}{RESET}"
         lines.append(border_row(" " * pad_left + coloured))
 
     lines.append(border_row(f"{colour}{'─' * inner}{RESET}"))
 
-    # ── VRAM bar
+    # ── VRAM bar (always present)
+    bar_w = max(10, inner - 24)
     if gpu.vram_total_mib is not None and gpu.vram_used_mib is not None:
-        bar_w = max(10, inner - 24)
         bar = _bar(gpu.vram_used_mib, gpu.vram_total_mib, bar_w)
         vram_str = (
             f" VRAM {bar} "
@@ -326,28 +326,29 @@ def render_card(gpu: GPUInfo, card_width: int) -> list[str]:
     else:
         lines.append(border_row(f" VRAM {DIM}N/A{RESET}"))
 
-    # ── Utilisation
+    # ── Utilisation (always present)
     if gpu.util_pct is not None:
-        util_bar = _bar(gpu.util_pct, 100, max(10, inner - 24))
+        util_bar = _bar(gpu.util_pct, 100, bar_w)
         lines.append(border_row(
             f" UTIL {util_bar} {CYAN}{gpu.util_pct:>3}{RESET}%"
         ))
+    else:
+        lines.append(border_row(f" UTIL {DIM}N/A{RESET}"))
 
-    # ── Temperature
+    # ── Temperature (always present)
     if gpu.temp_c is not None:
         tc = _temp_colour(gpu.temp_c)
-        lines.append(border_row(
-            f" TEMP {tc}{gpu.temp_c}°C{RESET}"
-        ))
+        lines.append(border_row(f" TEMP {tc}{gpu.temp_c}°C{RESET}"))
+    else:
+        lines.append(border_row(f" TEMP {DIM}N/A{RESET}"))
 
-    # ── Driver / PCIe
+    # ── Driver / PCIe (always present)
     info_parts = []
     if gpu.driver:
         info_parts.append(f"Driver {DIM}{gpu.driver}{RESET}")
     if gpu.pcie_width:
         info_parts.append(f"PCIe x{gpu.pcie_width}")
-    if info_parts:
-        lines.append(border_row(" " + "  ".join(info_parts)))
+    lines.append(border_row(" " + "  ".join(info_parts) if info_parts else ""))
 
     lines.append(border_bot())
     return lines
