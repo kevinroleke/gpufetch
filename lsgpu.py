@@ -2,6 +2,7 @@
 """lsgpu — list connected GPUs in a terminal grid with ASCII art."""
 
 import argparse
+import random
 import re
 import select
 import shutil
@@ -145,6 +146,226 @@ def rainbowize(text: str, offset: float = 0.0) -> str:
             col += 1
             i += 1
     return "".join(result)
+
+
+# ── Themes ────────────────────────────────────────────────────────────────────
+
+class Theme:
+    """Base display theme. Subclass, set name, override apply(), add to THEME_REGISTRY."""
+    name: str = "default"
+
+    def apply(self, text: str, frame: int) -> str:
+        return text
+
+
+class RainbowTheme(Theme):
+    name = "rainbow"
+
+    def apply(self, text: str, frame: int) -> str:
+        return rainbowize(text, frame * 3.0)
+
+
+class MatrixTheme(Theme):
+    """Digital-rain green; a band of bright columns sweeps across each frame."""
+    name = "matrix"
+    _STRIDE = 19  # columns between bright bands
+
+    def apply(self, text: str, frame: int) -> str:
+        bright_base = (frame // 2) * 3
+        result: list[str] = []
+        col = 0
+        i = 0
+        while i < len(text):
+            ch = text[i]
+            if ch == "\033" and i + 1 < len(text) and text[i + 1] == "[":
+                m = _ANSI_RE.match(text, i)
+                if m:
+                    inner = m.group()[2:-1]
+                    kept = [p for p in inner.split(";") if p in ("1", "2", "7")]
+                    if kept:
+                        result.append(f"\033[{';'.join(kept)}m")
+                    i += len(m.group())
+                else:
+                    result.append(ch)
+                    i += 1
+            elif ch == "\n":
+                result.append(RESET + "\n")
+                col = 0
+                i += 1
+            else:
+                if ch != " ":
+                    bright = ((col - bright_base) % self._STRIDE) < 2
+                    if bright:
+                        result.append("\033[1m\033[38;2;0;255;65m")
+                    else:
+                        result.append("\033[38;2;0;185;45m")
+                result.append(ch)
+                col += 1
+                i += 1
+        return "".join(result)
+
+
+THEME_REGISTRY: dict[str, Theme] = {
+    t.name: t for t in (Theme(), RainbowTheme(), MatrixTheme())
+}
+
+
+# ── Entities ──────────────────────────────────────────────────────────────────
+
+@dataclass
+class EntitySpec:
+    """Static definition of an entity type: frames of ASCII art + display colour."""
+    name:   str
+    frames: list[list[str]]
+    color:  str
+
+    @property
+    def width(self) -> int:
+        return max(len(line) for frame in self.frames for line in frame)
+
+    @property
+    def height(self) -> int:
+        return max(len(frame) for frame in self.frames)
+
+
+@dataclass
+class Entity:
+    """Live instance of an EntitySpec with position and velocity."""
+    spec:  EntitySpec
+    x:     float
+    y:     float
+    dx:    float
+    dy:    float
+    phase: int = 0   # frame offset so clones animate out of sync
+
+    def current_frame(self, tick: int) -> list[str]:
+        idx = (tick // 4 + self.phase) % len(self.spec.frames)
+        return self.spec.frames[idx]
+
+    def tick(self, cols: int, rows: int) -> None:
+        max_x = max(0, cols  - self.spec.width  - 1)
+        max_y = max(0, rows  - self.spec.height - 3)   # -3 reserves footer
+        self.x += self.dx
+        self.y += self.dy
+        if self.x <= 0:        self.x = 0.0;          self.dx =  abs(self.dx)
+        elif self.x >= max_x:  self.x = float(max_x); self.dx = -abs(self.dx)
+        if self.y <= 0:        self.y = 0.0;          self.dy =  abs(self.dy)
+        elif self.y >= max_y:  self.y = float(max_y); self.dy = -abs(self.dy)
+
+
+def _spawn(spec: EntitySpec, cols: int, rows: int, phase: int = 0) -> Entity:
+    max_x = max(1, cols - spec.width  - 1)
+    max_y = max(1, rows - spec.height - 3)
+    return Entity(
+        spec=spec,
+        x=float(random.randint(0, max_x)),
+        y=float(random.randint(0, max_y)),
+        dx=random.uniform(0.25, 0.55) * random.choice([-1, 1]),
+        dy=random.uniform(0.15, 0.40) * random.choice([-1, 1]),
+        phase=phase,
+    )
+
+
+def _overlay(entities: list[Entity], tick: int) -> str:
+    """Build a string of cursor-move + art sequences to stamp entities on screen."""
+    buf: list[str] = []
+    for e in entities:
+        for i, line in enumerate(e.current_frame(tick)):
+            row = int(e.y) + i + 1   # 1-based
+            col = int(e.x) + 1
+            buf.append(f"\033[{row};{col}H{e.spec.color}{line}{RESET}")
+    return "".join(buf)
+
+
+# ── Entity registry ───────────────────────────────────────────────────────────
+
+ENTITY_REGISTRY: dict[str, EntitySpec] = {}
+
+def _reg(spec: EntitySpec) -> EntitySpec:
+    ENTITY_REGISTRY[spec.name] = spec
+    return spec
+
+_reg(EntitySpec("ufo", color=CYAN, frames=[
+    [
+        '   .-"-.  ',
+        ' _/ o  o\\_',
+        '(=========)',
+        " `-------' ",
+    ],
+    [
+        '   .-"-.  ',
+        ' _/* ** *\\_',
+        '(=========)',
+        " `-------' ",
+    ],
+]))
+
+_reg(EntitySpec("ghost", color=WHITE, frames=[
+    [
+        "  .-.  ",
+        " (o o) ",
+        "  )=(  ",
+        " /   \\ ",
+        "/`---'\\",
+    ],
+    [
+        "  .-.  ",
+        " (- -) ",
+        "  )=(  ",
+        " /   \\ ",
+        "|_/ \\_|",
+    ],
+]))
+
+_reg(EntitySpec("tux", color=WHITE, frames=[
+    [
+        "  .--. ",
+        " (o  o)",
+        "  |=|  ",
+        " /   \\ ",
+        "(_____)",
+    ],
+]))
+
+_reg(EntitySpec("dvd", color=MAGENTA, frames=[
+    [
+        ".------.",
+        "| D V D|",
+        "`------'",
+    ],
+]))
+
+_reg(EntitySpec("ship", color=YELLOW, frames=[
+    [
+        "  /\\  ",
+        " /  \\ ",
+        "/----\\",
+        "\\    /",
+        " >++< ",
+    ],
+    [
+        "  /\\  ",
+        " /  \\ ",
+        "/----\\",
+        "\\    /",
+        " >**< ",
+    ],
+]))
+
+_reg(EntitySpec("crab", color=RED, frames=[
+    [
+        " /Y\\ /Y\\ ",
+        "(o  ~  o)",
+        " \\_ ^ _/ ",
+        "  |   |  ",
+    ],
+    [
+        " \\Y/ \\Y/ ",
+        "(o  ~  o)",
+        " /- ^ -\\ ",
+        "  |   |  ",
+    ],
+]))
 
 
 # ── Data model ───────────────────────────────────────────────────────────────
@@ -534,74 +755,75 @@ def _read_key(timeout: float) -> str:
     return ch
 
 
-def run_tui(rainbow: bool) -> None:
+def run_tui(theme: Theme, entity_specs: list[EntitySpec]) -> None:
     """Full-screen animated TUI. Exits on q / ESC / Ctrl-C."""
-    fd   = sys.stdin.fileno()
-    old  = termios.tcgetattr(fd)
+    fd  = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
 
-    # Alternate screen + hide cursor
     sys.stdout.write("\033[?1049h\033[?25l\033[2J")
     sys.stdout.flush()
 
-    resized = False
-    def _on_resize(sig, _frame):
-        nonlocal resized
-        resized = True
-    signal.signal(signal.SIGWINCH, _on_resize)
+    signal.signal(signal.SIGWINCH, lambda *_: None)   # reread size each frame
 
     frame        = 0
-    gpus: list[GPUInfo] = []
-    last_poll    = 0.0
-    poll_age     = 0.0
+    gpus: list[GPUInfo]     = []
+    entities: list[Entity]  = []
+    last_poll  = 0.0
+    spawned    = False
 
     try:
         tty.setraw(fd)
 
         while True:
-            now = time.monotonic()
+            now  = time.monotonic()
+            term = shutil.get_terminal_size()
 
+            # ── spawn entities once we know the terminal size ─────────────────
+            if not spawned:
+                entities = [
+                    _spawn(spec, term.columns, term.lines, phase=i * 7)
+                    for i, spec in enumerate(entity_specs)
+                ]
+                spawned = True
+
+            # ── poll GPU stats every second ───────────────────────────────────
             if now - last_poll >= 1.0:
                 gpus      = collect_gpus()
                 last_poll = now
 
             poll_age = time.monotonic() - last_poll
-            term     = shutil.get_terminal_size()
 
-            # ── build frame ──────────────────────────────────────────────────
+            # ── build themed base ─────────────────────────────────────────────
             header = render_header(gpus, term.columns, frame)
-            grid   = render_grid(gpus, term.columns, frame)
+            grid   = render_grid(gpus,   term.columns, frame)
             footer = render_footer(term.columns, poll_age)
 
-            if rainbow:
-                # Shift hue by 3° per frame → full cycle every 120 frames (~10 s)
-                hue_offset = frame * 3.0
-                header = rainbowize(header, hue_offset)
-                grid   = rainbowize(grid,   hue_offset)
-                footer = rainbowize(footer, hue_offset)
+            header = theme.apply(header, frame)
+            grid   = theme.apply(grid,   frame)
+            footer = theme.apply(footer, frame)
 
-            main_block = header + grid
-
-            # Pin footer to the last two rows of the terminal.
-            # \033[{r};1H  = move cursor to row r, column 1 (1-based)
-            footer_row = term.lines - 1   # leave 2 rows for the footer
+            footer_row = term.lines - 1
 
             output = (
-                "\033[H"                                    # cursor home
-                + main_block
-                + f"\033[J"                                 # clear below main block
-                + f"\033[{footer_row};1H"                   # jump to footer row
+                "\033[H"
+                + header + grid
+                + "\033[J"
+                + f"\033[{footer_row};1H"
                 + footer
+                + _overlay(entities, frame)   # stamp entities on top
             )
 
-            # In raw mode \n is bare LF (no CR); fix every newline → \r\n
             sys.stdout.write(output.replace("\r\n", "\n").replace("\n", "\r\n"))
             sys.stdout.flush()
 
+            # ── tick entities ─────────────────────────────────────────────────
+            for e in entities:
+                e.tick(term.columns, term.lines)
+
             frame += 1
 
-            # ── input / timing ───────────────────────────────────────────────
             ch = _read_key(1.0 / FPS)
-            if ch in ("q", "Q", "\x03", "\x1b"):   # q / Ctrl-C / ESC
+            if ch in ("q", "Q", "\x03", "\x1b"):
                 break
 
     except KeyboardInterrupt:
@@ -609,7 +831,6 @@ def run_tui(rainbow: bool) -> None:
 
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        # Leave alternate screen, restore cursor
         sys.stdout.write("\033[?1049l\033[?25h\033[0m")
         sys.stdout.flush()
 
@@ -617,20 +838,58 @@ def run_tui(rainbow: bool) -> None:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="lsgpu", description="List connected GPUs")
-    parser.add_argument("--rainbow", action="store_true",
-                        help="Paint output in glorious rainbow colours")
+    parser = argparse.ArgumentParser(
+        prog="lsgpu",
+        description="List connected GPUs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "themes:   " + ", ".join(THEME_REGISTRY) + "\n"
+            "entities: " + ", ".join(ENTITY_REGISTRY)
+        ),
+    )
+    parser.add_argument(
+        "--theme", default="default", metavar="NAME",
+        help="display theme (default: default)",
+    )
+    parser.add_argument(
+        "--entities", default="", metavar="a,b,c",
+        help="comma-separated entity names to bounce on screen",
+    )
+    parser.add_argument(
+        "--entities-random", type=int, default=0, metavar="N",
+        help="spawn N randomly chosen entities",
+    )
     args = parser.parse_args()
 
+    # ── resolve theme ─────────────────────────────────────────────────────────
+    theme = THEME_REGISTRY.get(args.theme)
+    if theme is None:
+        known = ", ".join(THEME_REGISTRY)
+        parser.error(f"unknown theme {args.theme!r}. known: {known}")
+
+    # ── resolve entities ──────────────────────────────────────────────────────
+    entity_specs: list[EntitySpec] = []
+
+    if args.entities:
+        for name in args.entities.split(","):
+            name = name.strip()
+            if name not in ENTITY_REGISTRY:
+                known = ", ".join(ENTITY_REGISTRY)
+                parser.error(f"unknown entity {name!r}. known: {known}")
+            entity_specs.append(ENTITY_REGISTRY[name])
+
+    if args.entities_random > 0:
+        pool = list(ENTITY_REGISTRY.values())
+        entity_specs += random.choices(pool, k=args.entities_random)
+
+    # ── run ───────────────────────────────────────────────────────────────────
     if sys.stdout.isatty():
-        run_tui(args.rainbow)
+        run_tui(theme, entity_specs)
     else:
-        # Non-interactive (piped/redirected): plain one-shot output
-        term = shutil.get_terminal_size(fallback=(80, 24))
-        gpus = collect_gpus()
+        term   = shutil.get_terminal_size(fallback=(80, 24))
+        gpus   = collect_gpus()
         output = render_header(gpus, term.columns) + render_grid(gpus, term.columns)
-        if args.rainbow:
-            output = rainbowize(output)
+        output = theme.apply(output, 0)
         print(output, end="")
 
 
