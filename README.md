@@ -2,6 +2,8 @@
 
 Minimal CLI tool for displaying connected GPUs
 
+![demo gif](./demo.gif)
+
 ## Installing
 uv:
 ```

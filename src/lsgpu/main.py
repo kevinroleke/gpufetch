@@ -28,11 +28,13 @@ from .eightball import random_response, render_eightball_widget, render_eightbal
 from . import game_wordle
 from . import game_snake
 from . import game_roulette
+from . import game_blackjack
 
 _GAMES = {
-    "wordle":   game_wordle.play,
-    "snake":    game_snake.play,
-    "roulette": game_roulette.play,
+    "wordle":     game_wordle.play,
+    "snake":      game_snake.play,
+    "roulette":   game_roulette.play,
+    "blackjack":  game_blackjack.play,
 }
 
 
