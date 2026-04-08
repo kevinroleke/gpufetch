@@ -7,6 +7,7 @@ terminal is in raw mode.  The only public symbol is `play()`.
 import datetime
 import json
 import os
+import pathlib
 import random
 import select
 import sys
@@ -177,8 +178,15 @@ _ANSWERS: list[str] = list({w for w in [
     "WISPY", "WONKY", "WOOZY", "WORMY", "ZINGY", "ZIPPY", "ZESTY",
 ] if len(w) == 5 and w.isalpha()})
 
-# Valid guesses = same set as answers
-_VALID_GUESSES: set[str] = set(_ANSWERS)
+# Valid guesses: full NYT word list (~14 855 words) loaded from bundled data file.
+# Falls back to the answer set if the file is missing.
+_WORDLE_DATA = pathlib.Path(__file__).parent / "data" / "wordle_valid.txt"
+try:
+    _VALID_GUESSES: set[str] = {
+        w.strip().upper() for w in _WORDLE_DATA.read_text().splitlines() if w.strip()
+    }
+except FileNotFoundError:
+    _VALID_GUESSES = set(_ANSWERS)
 
 # ---------------------------------------------------------------------------
 # ANSI colour helpers
