@@ -3,7 +3,7 @@
 import random
 from dataclasses import dataclass, field
 
-from ..ansi import RESET
+from ..ansi import RESET, strip_ansi
 
 
 @dataclass
@@ -23,7 +23,7 @@ class EntitySpec:
 
     @property
     def width(self) -> int:
-        return max(len(line) for frame in self.frames for line in frame)
+        return max(len(strip_ansi(line)) for frame in self.frames for line in frame)
 
     @property
     def height(self) -> int:
