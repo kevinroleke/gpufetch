@@ -22,6 +22,9 @@ from themes.base import Theme
 from entities import ENTITY_REGISTRY
 from entities.base import EntitySpec, Entity, spawn, overlay
 from spotify import SpotifyClient, SpotifyPoller
+from sysinfo import SysinfoPoller, render_sysinfo_widget
+from weather import WeatherPoller, render_weather_widget
+from eightball import random_response, render_eightball_widget, render_eightball_overlay
 
 
 # ── GPU ASCII art templates ───────────────────────────────────────────────────
@@ -518,22 +521,29 @@ def execute_command(
     entity_specs: list[EntitySpec],
     fire_enabled: bool,
     spotify_enabled: bool,
+    sysinfo_enabled: bool,
+    weather_enabled: bool,
+    eightball_enabled: bool,
     term_cols: int,
     term_lines: int,
-) -> "tuple[Theme, list[Entity], list[EntitySpec], bool, bool] | str":
+) -> "tuple | str":
     """Parse and execute a TUI command. Returns updated state tuple or error string."""
     parts = cmd.split()
     if not parts:
-        return (theme, entities, entity_specs, fire_enabled, spotify_enabled)
+        return (theme, entities, entity_specs, fire_enabled, spotify_enabled,
+                sysinfo_enabled, weather_enabled, eightball_enabled)
     name = parts[0].lower()
 
     def _ok(**kw):
         return (
-            kw.get("theme",           theme),
-            kw.get("entities",        entities),
-            kw.get("entity_specs",    entity_specs),
-            kw.get("fire_enabled",    fire_enabled),
-            kw.get("spotify_enabled", spotify_enabled),
+            kw.get("theme",             theme),
+            kw.get("entities",          entities),
+            kw.get("entity_specs",      entity_specs),
+            kw.get("fire_enabled",      fire_enabled),
+            kw.get("spotify_enabled",   spotify_enabled),
+            kw.get("sysinfo_enabled",   sysinfo_enabled),
+            kw.get("weather_enabled",   weather_enabled),
+            kw.get("eightball_enabled", eightball_enabled),
         )
 
     if name == "change-theme":
@@ -591,10 +601,29 @@ def execute_command(
     elif name == "connect-spotify":
         return "__CONNECT_SPOTIFY__"
 
+    elif name == "sysinfo":
+        if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
+            return "usage: sysinfo <on|off>"
+        return _ok(sysinfo_enabled=parts[1].lower() == "on")
+
+    elif name == "weather":
+        if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
+            return "usage: weather <on|off>"
+        return _ok(weather_enabled=parts[1].lower() == "on")
+
+    elif name == "eightball":
+        if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
+            return "usage: eightball <on|off>"
+        return _ok(eightball_enabled=parts[1].lower() == "on")
+
+    elif name == "8ball":
+        question = " ".join(parts[1:]) if len(parts) > 1 else "?"
+        return ("__8BALL__", question, random_response())
+
     else:
         return (f"unknown command {name!r}  "
-                "try: change-theme, change-theme-random, killall, kill, "
-                "spawn, fire, spotify, connect-spotify")
+                "try: change-theme, change-theme-random, killall, kill, spawn, "
+                "fire, spotify, connect-spotify, sysinfo, weather, eightball, 8ball")
 
 
 def _read_key(fd: int, timeout: float) -> str:
@@ -627,7 +656,10 @@ def _tui_enter(fd: int) -> None:
 
 def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             fire_enabled: bool = False,
-            spotify_enabled: bool = False) -> None:
+            spotify_enabled: bool = False,
+            sysinfo_enabled: bool = False,
+            weather_enabled: bool = False,
+            eightball_enabled: bool = False) -> None:
     fd  = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
 
@@ -646,7 +678,12 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
     fire_width      = 0
 
     spotify_client  = SpotifyClient()
-    spotify_poller: "SpotifyPoller | None" = None
+    spotify_poller:  "SpotifyPoller  | None" = None
+    sysinfo_poller:  "SysinfoPoller  | None" = None
+    weather_poller:  "WeatherPoller  | None" = None
+    eightball_response: "tuple[str, str] | None" = None
+    eightball_question: str = ""
+    eightball_flash: int = 0
 
     def _ensure_poller():
         nonlocal spotify_poller
@@ -658,6 +695,28 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
         if spotify_poller is not None:
             spotify_poller.stop()
             spotify_poller = None
+
+    def _ensure_sysinfo():
+        nonlocal sysinfo_poller
+        if sysinfo_enabled and sysinfo_poller is None:
+            sysinfo_poller = SysinfoPoller()
+
+    def _stop_sysinfo():
+        nonlocal sysinfo_poller
+        if sysinfo_poller is not None:
+            sysinfo_poller.stop()
+            sysinfo_poller = None
+
+    def _ensure_weather():
+        nonlocal weather_poller
+        if weather_enabled and weather_poller is None:
+            weather_poller = WeatherPoller()
+
+    def _stop_weather():
+        nonlocal weather_poller
+        if weather_poller is not None:
+            weather_poller.stop()
+            weather_poller = None
 
     try:
         while True:
@@ -683,6 +742,12 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             _ensure_poller()
             if not spotify_enabled:
                 _stop_poller()
+            _ensure_sysinfo()
+            if not sysinfo_enabled:
+                _stop_sysinfo()
+            _ensure_weather()
+            if not weather_enabled:
+                _stop_weather()
 
             track = spotify_poller.get() if spotify_poller else None
 
@@ -690,19 +755,33 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             header   = theme.apply(render_header(gpus, term.columns, frame), frame)
             grid     = theme.apply(render_grid(gpus,   term.columns, frame), frame)
 
-            if spotify_enabled:
-                spotify_box = render_spotify_widget(
-                    track, spotify_client.is_connected(), term.columns
-                )
-            else:
-                spotify_box = ""
+            sysinfo_box = (
+                render_sysinfo_widget(sysinfo_poller.get(), term.columns)
+                if sysinfo_enabled else ""
+            )
+            weather_box = (
+                render_weather_widget(weather_poller.get(), term.columns)
+                if weather_enabled else ""
+            )
+            spotify_box = (
+                render_spotify_widget(track, spotify_client.is_connected(), term.columns)
+                if spotify_enabled else ""
+            )
+            eightball_box = (
+                render_eightball_widget(eightball_response, term.columns)
+                if eightball_enabled else ""
+            )
 
             if cmd_mode:
                 footer = render_cmd_footer(term.columns, cmd_buf, cmd_error)
             else:
                 footer = theme.apply(render_footer(term.columns, poll_age), frame)
 
-            grid_part = "\033[H" + header + grid + spotify_box + "\033[J"
+            grid_part = (
+                "\033[H" + header + grid
+                + sysinfo_box + weather_box + spotify_box + eightball_box
+                + "\033[J"
+            )
             footer_part = (
                 f"\033[{term.lines - 1};1H"
                 + footer
@@ -712,6 +791,12 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             if fire_enabled and fire_buf:
                 sys.stdout.write(fire_render(fire_buf, term.columns, term.lines))
             sys.stdout.write(footer_part.replace("\r\n", "\n").replace("\n", "\r\n"))
+            if eightball_flash > 0 and eightball_response is not None:
+                sys.stdout.write(render_eightball_overlay(
+                    eightball_question, eightball_response,
+                    term.columns, term.lines,
+                ))
+                eightball_flash -= 1
             sys.stdout.flush()
 
             for e in entities:
@@ -724,7 +809,9 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                 if ch in ("\r", "\n"):
                     result = execute_command(
                         cmd_buf.strip(), theme, entities, entity_specs,
-                        fire_enabled, spotify_enabled, term.columns, term.lines,
+                        fire_enabled, spotify_enabled,
+                        sysinfo_enabled, weather_enabled, eightball_enabled,
+                        term.columns, term.lines,
                     )
                     if result == "__CONNECT_SPOTIFY__":
                         # Temporarily leave TUI, run OAuth, come back
@@ -736,11 +823,19 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                         _tui_enter(fd)
                         cmd_mode = False
                         cmd_buf  = cmd_error = ""
+                    elif isinstance(result, tuple) and result[0] == "__8BALL__":
+                        _, eightball_question, eightball_response = result
+                        eightball_flash = 36   # ~3 s at 12 fps
+                        eightball_enabled = True
+                        cmd_mode = False
+                        cmd_buf  = cmd_error = ""
                     elif isinstance(result, str):
                         cmd_error = result
                         cmd_buf   = ""
                     else:
-                        theme, entities, entity_specs, fire_enabled, spotify_enabled = result
+                        (theme, entities, entity_specs,
+                         fire_enabled, spotify_enabled,
+                         sysinfo_enabled, weather_enabled, eightball_enabled) = result
                         if fire_enabled and (not fire_buf or fire_width != term.columns):
                             fire_buf   = fire_init(term.columns)
                             fire_width = term.columns
@@ -769,6 +864,8 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
         pass
     finally:
         _stop_poller()
+        _stop_sysinfo()
+        _stop_weather()
         _tui_exit(fd, old)
 
 
@@ -794,6 +891,12 @@ def main() -> None:
                         help="run Spotify OAuth flow and save credentials, then exit")
     parser.add_argument("--spotify", action="store_true",
                         help="show Spotify now-playing widget")
+    parser.add_argument("--sysinfo", action="store_true",
+                        help="show CPU/memory usage widget")
+    parser.add_argument("--weather", action="store_true",
+                        help="show weather widget for Rochester, NY")
+    parser.add_argument("--eightball", action="store_true",
+                        help="show Magic 8-ball widget")
     args = parser.parse_args()
 
     theme = THEME_REGISTRY.get(args.theme)
@@ -819,7 +922,10 @@ def main() -> None:
     if sys.stdout.isatty():
         run_tui(theme, entity_specs,
                 fire_enabled=args.fire,
-                spotify_enabled=args.spotify)
+                spotify_enabled=args.spotify,
+                sysinfo_enabled=args.sysinfo,
+                weather_enabled=args.weather,
+                eightball_enabled=args.eightball)
     else:
         term   = shutil.get_terminal_size(fallback=(80, 24))
         gpus   = collect_gpus()

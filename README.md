@@ -1,6 +1,6 @@
 # lsgpu
 
-Simple CLI for displaying connected GPUs
+Minimal CLI tool for displaying connected GPUs
 
 ## Installing
 uv:
