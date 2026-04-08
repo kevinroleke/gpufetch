@@ -4,58 +4,181 @@ Launch via `/play wordle` while the alternate screen is active and the
 terminal is in raw mode.  The only public symbol is `play()`.
 """
 
+import datetime
+import json
 import os
 import random
 import select
 import sys
 import time
+import urllib.request
 
 from ansi import RESET, BOLD, DIM, GREEN, CYAN, YELLOW, RED, WHITE
+
+
+def _fetch_nyt_word() -> str | None:
+    """Fetch today's Wordle solution from the NYT API. Returns None on failure."""
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    url = f"https://www.nytimes.com/svc/wordle/v2/{today}.json"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        word = data.get("solution", "").upper().strip()
+        if len(word) == 5 and word.isalpha():
+            return word
+    except Exception:
+        pass
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Word lists
 # ---------------------------------------------------------------------------
 
-_WORDS: list[str] = [
-    "CRANE", "STARE", "AUDIO", "RAISE", "SLATE", "CRATE", "TRACE", "SAUCE",
-    "BLAZE", "STORM", "FLASH", "NIGHT", "FLAME", "BREAD", "CLOCK", "DANCE",
-    "EVERY", "FLOAT", "GHOST", "HEART", "JOKER", "KNIFE", "LEMON", "METAL",
-    "NOVEL", "OCEAN", "PANIC", "QUEEN", "RIVER", "SHADE", "TIGER", "ULTRA",
-    "VAPOR", "WHALE", "XENON", "YACHT", "ZEBRA", "ANGEL", "BLACK", "CHAIR",
-    "DELTA", "EAGLE", "FIGHT", "GRAVE", "HONOR", "IVORY", "KARMA", "LASER",
-    "MAGIC", "NORTH", "ORBIT", "PLANT", "QUEST", "ROMAN", "SHARP", "TORCH",
-    "UNION", "VIVID", "WAGON", "EXACT", "YOUTH", "CABLE", "BLUNT", "GLOBE",
-    "IDEAL", "JUMPY", "KNEEL", "LOYAL", "MOODY", "NOBLE", "OZONE", "PIVOT",
-    "ROCKY", "SQUAD", "TRUTH", "UNTIL", "VALID", "WORKS", "EXTRA", "YOUNG",
-    "PIXEL", "PROXY", "RAPID", "SCOUT", "TOWER", "SWIFT", "POWER", "BOUND",
-    "CROWN", "DRAIN", "ELBOW", "FANCY", "GRANT", "HINGE", "INPUT", "JUDGE",
-    "KIOSK", "LIGHT", "MOUTH", "NERVE", "OTHER", "PRIDE", "QUIRK", "ROUGH",
-    "SHIFT", "THINK", "UPSET", "VOICE", "WITCH", "FIRST", "PLACE", "BRING",
-    "AMONG", "NEVER", "THEIR", "THESE", "STILL", "WHERE", "THOSE", "WHILE",
-    "THREE", "SEVEN", "EIGHT", "SPACE", "WATER", "WORLD", "FORCE", "GREAT",
-    "SMALL", "SOUND", "POINT", "WOMAN", "MONEY", "STAND", "THING", "STATE",
-    "JAZZY", "ZONAL", "ZONES", "SMOKE", "STRIP", "GROAN", "PLUMB", "CLOWN",
-    "SHRUG", "BRISK", "GLYPH", "CRIMP", "CINCH", "CLEFT", "PROWL", "STOMP",
-    "SNORE", "STING", "GRIME", "FLINT", "BRAID", "SLUNK", "TROUT", "SCOUT",
-    "SHAWL", "BROTH", "CLAMP", "CRISP", "FROWN", "GRUMP", "PLANK", "SWAMP",
-    "THICK", "TRAWL", "TREMBLE", "YELP", "CLEFT", "GRAFT", "SHRUB", "STUMP",
-    "BLAND", "BLEND", "BLOWN", "BRUNT", "CHAMP", "CLANG", "CLASP", "CLOVE",
-    "COAST", "CRAMP", "CREEP", "CRISP", "CROUP", "DRAFT", "DRANK", "DREAD",
-    "DWARF", "EXPEL", "EXULT", "FLAIR", "FLANK", "FLARE", "FLECK", "FLING",
-    "FLIRT", "FLOCK", "FLOOD", "FLOOR", "FLOSS", "FLOUT", "FLOWN", "FLUFF",
-    "FLUNG", "FLUNK", "FLUTE", "FRAIL", "FREAK", "FRESH", "FRILL", "FRISK",
-    "FRIZZ", "FRONT", "FROST", "FROTH", "FROZE", "FRUIT", "GRAIL", "GRASP",
-    "GRASS", "GRATE", "GRAZE", "GREED", "GREET", "GRIEF", "GRILL", "GRIPE",
-    "GROAN", "GROIN", "GROOM", "GROPE", "GROSS", "GROUP", "GROUT", "GROVE",
-    "GROWL", "GRUEL", "GRUFF", "GRUNK", "GRUNT", "GUILE", "GUISE", "GUSTO",
-    "GYPSY", "HAUNT", "HAVEN", "HOIST", "HOLLY", "HOMER", "HORDE", "HUSKY",
-]
+# Full original NYT Wordle answer list (2309 words), filtered to 5-letter alpha
+# and deduplicated.
+_ANSWERS: list[str] = list({w for w in [
+    "ABACK", "ABASE", "ABATE", "ABBEY", "ABBOT", "ABHOR", "ABIDE", "ABLER",
+    "ABODE", "ABORT", "ABOUT", "ABOVE", "ABUSE", "ABYSS", "ACRES", "ACRID",
+    "ACTED", "ACUTE", "ADAGE", "ADDED", "ADEPT", "ADMIT", "ADOPT", "ADULT",
+    "AEONS", "AFFIX", "AFOOT", "AFTER", "AGAIN", "AGATE", "AGAVE", "AGILE",
+    "AGING", "AGLOW", "AGONY", "AGREE", "AHEAD", "AIDED", "AIMER", "AIRED",
+    "AISLE", "ALGAE", "ALIBI", "ALIEN", "ALIGN", "ALIKE", "ALIVE", "ALLAY",
+    "ALLEY", "ALLOT", "ALLOW", "ALOFT", "ALONE", "ALOOF", "ALOUD", "ALTER",
+    "AMASS", "AMAZE", "AMINE", "AMINO", "AMISS", "AMUCK", "AMPLE", "AMUSE",
+    "ANGEL", "ANGER", "ANGLE", "ANGRY", "ANGST", "ANIME", "ANISE", "ANNEX",
+    "ANNOY", "ANTIC", "ANVIL", "AORTA", "APHID", "APPLE", "APPLY", "APRON",
+    "APTLY", "AREAS", "ARGON", "AROMA", "AROSE", "ARRAY", "ARROW", "ASHEN",
+    "ASIDE", "ASSET", "ATOMS", "ATONE", "ATTIC", "AUDIO", "AUDIT", "AUGUR",
+    "AVAIL", "AVERT", "AVIAN", "AVOID", "AWAIT", "AWAKE", "AWARD", "AWASH",
+    "AWFUL", "AWOKE", "AXIAL", "AXIOM", "BADLY", "BAGEL", "BAKER", "BALER",
+    "BALLS", "BANAL", "BANJO", "BARGE", "BARON", "BASTE", "BATCH", "BATHE",
+    "BATTY", "BAWDY", "BAYOU", "BEACH", "BEARD", "BEAST", "BEGAN", "BEGOT",
+    "BEING", "BESET", "BIDET", "BINGE", "BIOME", "BISON", "BITCH", "BITER",
+    "BLAZE", "BLEAT", "BLEED", "BLIMP", "BLOKE", "BLOOD", "BLOOM", "BLOWN",
+    "BLURT", "BOOZE", "BOXER", "BRACE", "BRAND", "BRASH", "BRAWL", "BRAWN",
+    "BREAM", "BREED", "BRIDE", "BRINE", "BRINK", "BROIL", "BROOD", "BROTH",
+    "BROWN", "BRUNT", "BRUTE", "BUDDY", "BUDGE", "BUGGY", "BULGE", "BUMPY",
+    "BUNNY", "BUTTE", "BYTES", "CABIN", "CADET", "CAMEL", "CAMEO", "CANAL",
+    "CANOE", "CARGO", "CAROL", "CASTE", "CATCH", "CAULK", "CEASE", "CEDAR",
+    "CHAFE", "CHAFF", "CHAIN", "CHALK", "CHAMP", "CHAOS", "CHARD", "CHARM",
+    "CHASM", "CHEER", "CHESS", "CHIDE", "CHIMP", "CHINA", "CHOIR", "CHOKE",
+    "CHORD", "CHOSE", "CHUNK", "CHURN", "CIDER", "SIEGE", "CINCH", "CIRCA",
+    "CIVIC", "CIVIL", "CLACK", "CLAMP", "CLANG", "CLANK", "CLASH", "CLAVE",
+    "CLEAR", "CLEFT", "CLIMB", "CLING", "CLOAK", "CLONE", "CLOTH", "CLOUD",
+    "CLUMP", "CLUNG", "COALS", "COBRA", "COMET", "COMIC", "COMMA", "COPAL",
+    "CORAL", "CORPS", "COUPE", "COVET", "CRACK", "CRAMP", "CRANE", "CRASH",
+    "CRASS", "CRATE", "CRAWL", "CREEP", "CRIMP", "CRISP", "CROAK", "CRUMB",
+    "CRUST", "CRYPT", "CYBER", "CYCLE", "DADDY", "DAILY", "DAISY", "DECAL",
+    "DECAY", "DECOR", "DECOY", "DECRY", "DELTA", "DEPOT", "DEITY", "DEALT",
+    "DEMON", "DEMUR", "DENSE", "DERBY", "DETER", "DIRTY", "DISCO", "DISHY",
+    "DITCH", "DITTO", "DIVAN", "DODGE", "DOGGY", "DOLCE", "DOLOR", "DOWRY",
+    "DRAFT", "DRAIN", "DRAKE", "DRAPE", "DRAWL", "DRIED", "DRIFT", "DRINK",
+    "DROOL", "DROVE", "DROWN", "DRUID", "DRUNK", "DRYER", "DUMPY", "DUNCE",
+    "DUPER", "DUPLE", "DWARF", "DYING", "EAGER", "EARLY", "EARTH", "EIGHT",
+    "ELITE", "EMCEE", "EMOTE", "EMPTY", "ENDOW", "ENEMA", "ENSUE", "EQUIP",
+    "ESSAY", "ETHIC", "EXALT", "EXCEL", "EXERT", "EXILE", "EXULT", "FABLE",
+    "FACET", "FAINT", "FAIRY", "FAITH", "FALSE", "FANCY", "FARCE", "FATAL",
+    "FAUNA", "FEAST", "FERRY", "FETCH", "FETID", "FEVER", "FIEND", "FINCH",
+    "FLAIR", "FLAKE", "FLAKY", "FLANK", "FLARE", "FLASK", "FLICK", "FLINCH",
+    "FLIRT", "FLOCK", "FLOOD", "FLOSS", "FLOUR", "FLOWN", "FLUID", "FLUKE",
+    "FLUNG", "FLUNK", "FOCUS", "FORAY", "FORGE", "FOYER", "FRAIL", "FRAME",
+    "FRANK", "FRAUD", "FREAK", "FREED", "FRIAR", "FRIED", "FRISK", "FRONT",
+    "FROZE", "FUNGI", "GAUDY", "GAUZE", "GAVEL", "GIDDY", "GIRTH", "GIVEN",
+    "GLARE", "GLASS", "GLAZE", "GLEAM", "GLEAN", "GLIDE", "GLINT", "GNASH",
+    "GNARL", "GOUGE", "GRACE", "GRAND", "GRANT", "GRAPE", "GRASP", "GRAVY",
+    "GRAZE", "GREED", "GREET", "GRIEF", "GRILL", "GRIME", "GRIPE", "GROAN",
+    "GROIN", "GROOM", "GROPE", "GROWL", "GRUEL", "GUAVA", "GUILE", "GUISE",
+    "GUSTO", "GYPSY", "HANDY", "HARSH", "HAUNT", "HAVEN", "HAVOC", "HAZEL",
+    "HEADY", "HEDGE", "HEFTY", "HEIST", "HENCE", "HIPPO", "HITCH", "HOARD",
+    "HOBBY", "HOLLY", "HOMER", "HONEY", "HONOR", "HOTEL", "HOUSE", "HOVER",
+    "HUMAN", "HUMPH", "HUNCH", "HUSKY", "HYDRA", "HYENA", "HYPER", "IDYLL",
+    "IMPEL", "INEPT", "INFER", "INGLE", "INLAY", "INSET", "INTER", "IRONY",
+    "IRATE", "INANE", "ISLET", "IVORY", "JAZZY", "JELLY", "JIFFY", "JOUST",
+    "JUICE", "JUICY", "JUMBO", "KARMA", "KAZOO", "KNAVE", "KNEEL", "KNELT",
+    "KNOLL", "KUDOS", "LABEL", "LANCE", "LATHE", "LATTE", "LAUGH", "LAYUP",
+    "LEAKY", "LEARN", "LEECH", "LEGAL", "LEMON", "LEVEL", "LIGHT", "LILAC",
+    "LIMIT", "LINER", "LINGO", "LITHE", "LOBBY", "LOCAL", "LOFTY", "LOGIC",
+    "LOTUS", "LOWLY", "LURID", "LUSTY", "LYRIC", "MACAW", "MAGIC", "MAIZE",
+    "MAJOR", "MAMBO", "MAPLE", "MARRY", "MATTE", "MAXIM", "MAYOR", "MELEE",
+    "MERCY", "MERGE", "MERIT", "MESSY", "METAL", "MIDST", "MIGHT", "MIMIC",
+    "MIRTH", "MISER", "MISTY", "MIXER", "MOCHA", "MODAL", "MOGUL", "MOLDY",
+    "MONKS", "MOODY", "MOOSE", "MORAL", "MOUSE", "MOUSY", "MOURN", "MUCKY",
+    "MUDDY", "MULCH", "MUNCH", "MURKY", "MYRRH", "NADIR", "NASAL", "NASTY",
+    "NAVAL", "NEIGH", "NERVE", "NIFTY", "NINNY", "NIPPY", "NOBLE", "NOISE",
+    "NOTCH", "NYMPH", "ODDLY", "OFFAL", "OFTEN", "OLIVE", "OMBRE", "ONSET",
+    "OPTIC", "OTTER", "OUGHT", "OUTDO", "OUTER", "OXIDE", "OZONE", "PADRE",
+    "PANSY", "PARKA", "PARTY", "PASTA", "PATSY", "PATTY", "PAUSE", "PAVED",
+    "PAYEE", "PEACE", "PEACH", "PENAL", "PENNY", "PERKY", "PETTY", "PHLOX",
+    "PIANO", "PILOT", "PINEY", "PIPIT", "PIZZA", "PLANK", "PLONK", "PLUCK",
+    "PLUMB", "PLUME", "PLUNK", "POKER", "POLYP", "POUCH", "POSSE", "POTTY",
+    "PRIDE", "PRIVY", "PROBE", "PRUDE", "PRUNE", "PSALM", "PUBIC", "PULSE",
+    "PULPY", "PUPIL", "PUTTY", "QUAFF", "QUALM", "QUELL", "QUILL", "QUOTA",
+    "QUOTH", "RABBI", "RABID", "RANCH", "RAVEN", "RAYON", "REACH", "REALM",
+    "REEDY", "RENAL", "RENEW", "REPAY", "REPEL", "RERUN", "REUSE", "REVEL",
+    "RIVET", "RODEO", "ROGUE", "ROOMY", "ROOST", "ROUGH", "ROUSE", "ROWDY",
+    "ROWER", "ROYAL", "RUGBY", "RULER", "RUSTY", "SABRE", "SADLY", "SAINT",
+    "SALVO", "SALSA", "SANDY", "SATIN", "SAVVY", "SCALD", "SCANT", "SCARF",
+    "SCARY", "SCOFF", "SCONE", "SCOUR", "SCRAM", "SCUFF", "SEDAN", "SEIZE",
+    "SEMEN", "SERUM", "SEVEN", "SEVER", "SHADY", "SHAME", "SHAVE", "SHAWL",
+    "SHEAR", "SHEEN", "SHEEP", "SHEER", "SHEET", "SHELF", "SHIFT", "SHIRE",
+    "SHIRK", "SHOAL", "SHOCK", "SHONE", "SHOWY", "SHRED", "SHRUB", "SHRUG",
+    "SHUNT", "SHUSH", "SKILL", "SKIRT", "SKIMP", "SKULK", "SLACK", "SLEEK",
+    "SLEET", "SLICK", "SLIDE", "SLING", "SLOTH", "SLUMP", "SLUNK", "SMACK",
+    "SMART", "SMEAR", "SMITE", "SMOKY", "SNAKY", "SNARE", "SNEAK", "SNEER",
+    "SNIFF", "SNOUT", "SNUFF", "SOAPY", "SOLAR", "SOOTY", "SORRY", "SOUTH",
+    "SNUCK", "SPLAY", "SPLAT", "SPLIT", "SPOKE", "SPOOK", "SPORT", "SPOUT",
+    "SPREE", "SPRIG", "SPUNK", "SPURN", "SQUAT", "STAFF", "STAID", "STAIN",
+    "STALK", "STALL", "STAMP", "STAND", "STARK", "STASH", "STAVE", "STEAD",
+    "STEAL", "STEAM", "STEEL", "STEEP", "STEER", "STERN", "STOIC", "STOMP",
+    "STONY", "STOOP", "STOUT", "STOVE", "STRIP", "STRUT", "STUCK", "STUDY",
+    "STUNG", "STUNK", "STUNT", "SUGAR", "SULKY", "SUNNY", "SUPER", "SURGE",
+    "SWAMP", "SWEAR", "SWEEP", "SWEET", "SWEPT", "SWIFT", "SWILL", "SWIPE",
+    "SWIRL", "SWOON", "SWOOP", "TABOO", "TALON", "TASTE", "TAUNT", "TAWNY",
+    "TEPID", "THEFT", "THEIR", "THEME", "THIEF", "THING", "THORN", "THOSE",
+    "THREE", "THREW", "THROB", "THROW", "THUMB", "THYME", "TIDAL", "TIGER",
+    "TIGHT", "TILDE", "TIPSY", "TITAN", "TOAST", "TODAY", "TONAL", "TOOTH",
+    "TOTAL", "TOUCH", "TOUGH", "TOXIN", "TOTEM", "TRAWL", "TREAD", "TRIAD",
+    "TRIED", "TRITE", "TROLL", "TROOP", "TROTH", "TROUT", "TROVE", "TRUCK",
+    "TRULY", "TRUMP", "TRUSS", "TRUST", "TUBER", "TULIP", "TUMOR", "TUNER",
+    "TUNIC", "TWAIN", "TWANG", "TWEAK", "TWEED", "TWERP", "TWICE", "TWILL",
+    "TWINE", "TWIRL", "ULTRA", "UNFIT", "UNIFY", "UNION", "UNTIL", "UNZIP",
+    "USHER", "USURP", "UTTER", "VAGUE", "VALET", "VALID", "VALOR", "VALVE",
+    "VAPOR", "VAULT", "VAUNT", "VICAR", "VISOR", "VITAL", "VIVID", "VIXEN",
+    "VOCAL", "VOGUE", "VOICE", "VOUCH", "VYING", "WAGER", "WALTZ", "WASTE",
+    "WATCH", "WATER", "WEEDY", "WEIRD", "WHACK", "WHINE", "WHIRL", "WHISK",
+    "WIDOW", "WISPY", "WITTY", "WORLD", "WORRY", "WORSE", "WORST", "WRATH",
+    "WRING", "WROTE", "WRYLY", "YACHT", "YIELD", "YOUNG", "ABUZZ", "BEEFY",
+    "BLUFF", "BLING", "BONNY", "BOOBY", "BORAX", "BOTCH", "BOWIE", "BULKY",
+    "BURLY", "CADDY", "CAGEY", "CAMPY", "CATTY", "CAVORT", "CLAMMY", "CLOUT",
+    "COMFY", "CONGA", "CORNY", "CROAK", "CURVY", "DENIM", "DITZY", "DIZZY",
+    "DODGY", "DOLLY", "DOOZY", "DOPEY", "DOWDY", "DOYEN", "DUCKY", "DUSKY",
+    "DUSTY", "EERIE", "ELFIN", "ELUDE", "ETUDE", "EVOKE", "EXACT", "FANNY",
+    "FAZED", "FIZZY", "FJORD", "FLAKY", "FOAMY", "FOGGY", "FOLIO", "FUDGE",
+    "FUNKY", "FUZZY", "GAUZY", "GIMPY", "GIZMO", "GLOOM", "GOOFY", "GOUTY",
+    "GRIMY", "GASSY", "GIRLY", "GODLY", "GORGE", "GRUMP", "GUMMY", "HANKY",
+    "HAIKU", "HAMMY", "HARDY", "HARPY", "HASTY", "HEFTY", "HIPPY", "HISSY",
+    "HOARY", "HOKEY", "HOMEY", "HOOKY", "HORNY", "HUBBY", "HUFFY", "HUNKY",
+    "HUSSY", "IRATE", "ITCHY", "JERKY", "JOLLY", "JUMPY", "KINKY", "KITTY",
+    "KNACK", "KOOKY", "LANKY", "LEERY", "LIMBO", "LIMP", "LIVID", "LOOPY",
+    "LUCKY", "MACHO", "MANLY", "MASSY", "MATEY", "MEATY", "MERRY", "MIFFED",
+    "MINTY", "MISSY", "MUGGY", "MUSHY", "MUSKY", "MUSTY", "NATTY", "NERVY",
+    "NERDY", "NEEDY", "NIPPY", "NOISY", "NUBBY", "ODDLY", "ONYX", "PANSY",
+    "PAUPER", "PEEVE", "PERKY", "PESKY", "PINEY", "PITHY", "PIXEL", "PLAID",
+    "PLUMP", "PLUNK", "PORKY", "POTTY", "POUTY", "PRIVY", "PUDGY", "PUFFY",
+    "PUNKY", "PUSHY", "QUAKY", "QUEER", "RABID", "RATTY", "ROWDY", "RUDDY",
+    "SASSY", "SAVVY", "SCALP", "SCARY", "SEEDY", "SHAKY", "SILKY", "SILLY",
+    "SKIMP", "SKUNK", "SLIMY", "SOGGY", "SOPPY", "STAID", "STARK", "STICKY",
+    "STIFF", "STOCK", "STONY", "STOOP", "STOUT", "SUAVE", "SULKY", "SURLY",
+    "TABBY", "TACKY", "TAFFY", "TANGY", "TATTY", "TERSE", "TIPSY", "TOADY",
+    "TOUCHY", "TOXIC", "TRIPE", "TUBBY", "TUMMY", "TWEEDY", "VAIN", "VAULT",
+    "VENAL", "VIVID", "VIXEN", "VICAR", "WACKY", "WINCE", "WIMPY", "WINDY",
+    "WISPY", "WONKY", "WOOZY", "WORMY", "ZINGY", "ZIPPY", "ZESTY",
+] if len(w) == 5 and w.isalpha()})
 
-# Filter to exactly 5-letter words and deduplicate
-_WORDS = list({w for w in _WORDS if len(w) == 5})
-
-# Valid guesses = same list (can be extended)
-_VALID_GUESSES: set[str] = set(_WORDS)
+# Valid guesses = same set as answers
+_VALID_GUESSES: set[str] = set(_ANSWERS)
 
 # ---------------------------------------------------------------------------
 # ANSI colour helpers
@@ -411,7 +534,7 @@ def _update_kb(kb_state: dict[str, str], letter: str, status: str) -> None:
 
 def play(fd: int, term_cols: int, term_lines: int) -> None:
     """Entry point called by lsgpu."""
-    target = random.choice(_WORDS)
+    target = _fetch_nyt_word() or random.choice(_ANSWERS)
 
     guesses: list[str] = []
     scores:  list[list[str]] = []

@@ -106,8 +106,9 @@ def _collides(dino_row: int, dino_col: int, cactuses: list[Cactus]) -> bool:
     for c in cactuses:
         cac_cols = set(range(c.col, c.col + _CACTUS_WIDTH))
         if dino_cols & cac_cols:
-            # check rows overlap
-            cac_rows = set(range(dino_row - _CACTUS_HEIGHT + 1, dino_row + 1))
+            # Cactus is bottom-anchored at its own ground_row
+            ground = c._ground_row  # type: ignore[attr-defined]
+            cac_rows = set(range(ground - _CACTUS_HEIGHT + 1, ground + 1))
             if dino_rows & cac_rows:
                 return True
     return False
@@ -173,19 +174,24 @@ def play(fd: int, term_cols: int, term_lines: int) -> None:
     speed_timer    = 0
 
     # ── initial full draw ────────────────────────────────────────────────────
+    # Disable auto-wrap so lines filling the terminal width don't garble output
+    sys.stdout.write("\033[?7l")
     buf = ["\033[2J\033[H"]
 
     # Header
     hint = " [SPACE] jump  [q] quit"
     score_str = f"Score: {score:05d}   HI: {hi_score:05d}"
     buf.append(_go(header_row, 1) + BOLD + WHITE + score_str + RESET)
-    buf.append(_go(header_row, term_cols - len(hint)) + DIM + hint + RESET)
+    hint_col = max(1, term_cols - len(hint))
+    buf.append(_go(header_row, hint_col) + DIM + hint + RESET)
+
+    line_w = term_cols - 1   # avoid auto-wrap at exact terminal width
 
     # Divider
-    buf.append(_go(divider_row, 1) + CYAN + "─" * term_cols + RESET)
+    buf.append(_go(divider_row, 1) + CYAN + "─" * line_w + RESET)
 
     # Ground line
-    buf.append(_go(ground_row + 1, 1) + CYAN + "─" * term_cols + RESET)
+    buf.append(_go(ground_row + 1, 1) + CYAN + "─" * line_w + RESET)
 
     # Initial dino
     buf.append(_draw_dino(dino_row, dino_col, _DINO_RUN[0], GREEN))
@@ -224,8 +230,8 @@ def play(fd: int, term_cols: int, term_lines: int) -> None:
                 prev_dino_row = dino_row
                 # clear play area
                 buf = ["\033[2J\033[H"]
-                buf.append(_go(divider_row, 1) + CYAN + "─" * term_cols + RESET)
-                buf.append(_go(ground_row + 1, 1) + CYAN + "─" * term_cols + RESET)
+                buf.append(_go(divider_row, 1) + CYAN + "─" * (term_cols - 1) + RESET)
+                buf.append(_go(ground_row + 1, 1) + CYAN + "─" * (term_cols - 1) + RESET)
                 _write("".join(buf))
                 continue
             if not airborne:
@@ -305,7 +311,7 @@ def play(fd: int, term_cols: int, term_lines: int) -> None:
         prev_dino_col = dino_col
 
         # Redraw ground (dino may have overwritten it)
-        buf.append(_go(ground_row + 1, 1) + CYAN + "─" * term_cols + RESET)
+        buf.append(_go(ground_row + 1, 1) + CYAN + "─" * (term_cols - 1) + RESET)
 
         # Erase old cactus positions by blanking a column ahead of each cactus
         # (easier: we redraw every cactus each frame at their new position after
@@ -343,3 +349,7 @@ def play(fd: int, term_cols: int, term_lines: int) -> None:
         # ── frame timing ─────────────────────────────────────────────────────
         elapsed = time.monotonic() - tick_start
         time.sleep(max(0.0, _TICK - elapsed))
+
+    # Re-enable auto-wrap before returning to lsgpu
+    sys.stdout.write("\033[?7h")
+    sys.stdout.flush()
