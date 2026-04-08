@@ -446,7 +446,6 @@ def _render_widgets(
     sysinfo_enabled: bool, sysinfo_data: "dict | None",
     weather_enabled: bool, weather_data: "dict | None",
     spotify_enabled: bool, track: "dict | None", spotify_connected: bool,
-    eightball_enabled: bool, eightball_resp: "tuple | None",
     term_cols: int,
 ) -> str:
     """Render all active widgets, tiling them side-by-side when space allows."""
@@ -459,8 +458,6 @@ def _render_widgets(
     if spotify_enabled:
         fns.append(lambda w, t=track, c=spotify_connected:
                    render_spotify_widget(t, c, w))
-    if eightball_enabled:
-        fns.append(lambda w, r=eightball_resp: render_eightball_widget(r, w))
 
     if not fns:
         return ""
@@ -585,7 +582,6 @@ def render_help_overlay(term_cols: int, term_lines: int,
         ("connect-spotify",        "OAuth login for Spotify"),
         ("sysinfo on|off",         "CPU/memory widget"),
         ("weather on|off",         "weather widget (Rochester NY)"),
-        ("eightball on|off",       "Magic 8-ball widget"),
         ("8ball [question]",       "shake the 8-ball"),
         ("play <game>",            "launch a game"),
         ("keybind <key> <cmd…>",   "bind a key to a command"),
@@ -741,7 +737,6 @@ def execute_command(
     spotify_enabled: bool,
     sysinfo_enabled: bool,
     weather_enabled: bool,
-    eightball_enabled: bool,
     term_cols: int,
     term_lines: int,
 ) -> "tuple | str":
@@ -749,19 +744,18 @@ def execute_command(
     parts = cmd.split()
     if not parts:
         return (theme, entities, entity_specs, fire_enabled, spotify_enabled,
-                sysinfo_enabled, weather_enabled, eightball_enabled)
+                sysinfo_enabled, weather_enabled)
     name = parts[0].lower()
 
     def _ok(**kw):
         return (
-            kw.get("theme",             theme),
-            kw.get("entities",          entities),
-            kw.get("entity_specs",      entity_specs),
-            kw.get("fire_enabled",      fire_enabled),
-            kw.get("spotify_enabled",   spotify_enabled),
-            kw.get("sysinfo_enabled",   sysinfo_enabled),
-            kw.get("weather_enabled",   weather_enabled),
-            kw.get("eightball_enabled", eightball_enabled),
+            kw.get("theme",           theme),
+            kw.get("entities",        entities),
+            kw.get("entity_specs",    entity_specs),
+            kw.get("fire_enabled",    fire_enabled),
+            kw.get("spotify_enabled", spotify_enabled),
+            kw.get("sysinfo_enabled", sysinfo_enabled),
+            kw.get("weather_enabled", weather_enabled),
         )
 
     if name == "change-theme":
@@ -833,12 +827,6 @@ def execute_command(
         if val is not None:       return "usage: weather [on|off]"
         return _ok(weather_enabled=not weather_enabled)
 
-    elif name == "eightball":
-        val = parts[1].lower() if len(parts) >= 2 else None
-        if val in ("on", "off"):  return _ok(eightball_enabled=val == "on")
-        if val is not None:       return "usage: eightball [on|off]"
-        return _ok(eightball_enabled=not eightball_enabled)
-
     elif name == "8ball":
         question = " ".join(parts[1:]) if len(parts) > 1 else "?"
         return ("__8BALL__", question, random_response())
@@ -866,7 +854,7 @@ def execute_command(
     else:
         return (f"unknown command {name!r}  "
                 "try: help, change-theme, change-theme-random, killall, kill, spawn, "
-                "fire, spotify, connect-spotify, sysinfo, weather, eightball, 8ball, "
+                "fire, spotify, connect-spotify, sysinfo, weather, 8ball, "
                 "play, keybind")
 
 
@@ -875,7 +863,7 @@ def execute_command(
 _ALL_COMMANDS = sorted([
     "change-theme", "change-theme-random", "killall", "kill", "spawn",
     "fire", "spotify", "connect-spotify", "sysinfo", "weather",
-    "eightball", "8ball", "play", "keybind", "help",
+    "8ball", "play", "keybind", "help",
 ])
 
 def _tab_completions(cmd_buf: str) -> list[str]:
@@ -896,7 +884,6 @@ def _tab_completions(cmd_buf: str) -> list[str]:
         "spotify":       ["on", "off"],
         "sysinfo":       ["on", "off"],
         "weather":       ["on", "off"],
-        "eightball":     ["on", "off"],
     }
     pool = pools.get(cmd, [])
     return [x for x in pool if x.startswith(arg_prefix)]
@@ -942,8 +929,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             fire_enabled: bool = False,
             spotify_enabled: bool = False,
             sysinfo_enabled: bool = False,
-            weather_enabled: bool = False,
-            eightball_enabled: bool = False) -> None:
+            weather_enabled: bool = False) -> None:
     fd  = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
 
@@ -1047,7 +1033,6 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                 sysinfo_enabled,  sysinfo_poller.get() if sysinfo_poller else None,
                 weather_enabled,  weather_poller.get() if weather_poller else None,
                 spotify_enabled,  track, spotify_client.is_connected(),
-                eightball_enabled, eightball_response,
                 term.columns,
             )
 
@@ -1089,7 +1074,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                     result = execute_command(
                         cmd_buf.strip(), theme, entities, entity_specs,
                         fire_enabled, spotify_enabled,
-                        sysinfo_enabled, weather_enabled, eightball_enabled,
+                        sysinfo_enabled, weather_enabled,
                         term.columns, term.lines,
                     )
                     if result == "__CONNECT_SPOTIFY__":
@@ -1126,7 +1111,6 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                     elif isinstance(result, tuple) and result[0] == "__8BALL__":
                         _, eightball_question, eightball_response = result
                         eightball_flash = 36   # ~3 s at 12 fps
-                        eightball_enabled = True
                         cmd_mode = False
                         cmd_buf  = cmd_error = ""
                     elif isinstance(result, str):
@@ -1135,7 +1119,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                     else:
                         (theme, entities, entity_specs,
                          fire_enabled, spotify_enabled,
-                         sysinfo_enabled, weather_enabled, eightball_enabled) = result
+                         sysinfo_enabled, weather_enabled) = result
                         if fire_enabled and (not fire_buf or fire_width != term.columns):
                             fire_buf   = fire_init(term.columns)
                             fire_width = term.columns
@@ -1182,7 +1166,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                     result = execute_command(
                         _keybinds[ch], theme, entities, entity_specs,
                         fire_enabled, spotify_enabled,
-                        sysinfo_enabled, weather_enabled, eightball_enabled,
+                        sysinfo_enabled, weather_enabled,
                         term.columns, term.lines,
                     )
                     if result == "__HELP__":
@@ -1200,12 +1184,11 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                         spawned = False
                     elif isinstance(result, tuple) and result[0] == "__8BALL__":
                         _, eightball_question, eightball_response = result
-                        eightball_flash   = 36
-                        eightball_enabled = True
+                        eightball_flash = 36
                     elif not isinstance(result, str):
                         (theme, entities, entity_specs,
                          fire_enabled, spotify_enabled,
-                         sysinfo_enabled, weather_enabled, eightball_enabled) = result
+                         sysinfo_enabled, weather_enabled) = result
                         if fire_enabled and (not fire_buf or fire_width != term.columns):
                             fire_buf   = fire_init(term.columns)
                             fire_width = term.columns
@@ -1247,8 +1230,6 @@ def main() -> None:
                         help="show CPU/memory usage widget")
     parser.add_argument("--weather", action="store_true",
                         help="show weather widget for Rochester, NY")
-    parser.add_argument("--eightball", action="store_true",
-                        help="show Magic 8-ball widget")
     parser.add_argument("--play", metavar="GAME", default="",
                         help=f"jump straight into a game: {', '.join(_GAMES)}")
     args = parser.parse_args()
@@ -1295,8 +1276,7 @@ def main() -> None:
                 fire_enabled=args.fire,
                 spotify_enabled=args.spotify,
                 sysinfo_enabled=args.sysinfo,
-                weather_enabled=args.weather,
-                eightball_enabled=args.eightball)
+                weather_enabled=args.weather)
     else:
         term   = shutil.get_terminal_size(fallback=(80, 24))
         gpus   = collect_gpus()
