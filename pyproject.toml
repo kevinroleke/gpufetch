@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lsgpu"
+version = "0.1.0"
+description = "GPU monitor TUI with ASCII art, games, and widgets"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[project.scripts]
+lsgpu = "lsgpu.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lsgpu"]
