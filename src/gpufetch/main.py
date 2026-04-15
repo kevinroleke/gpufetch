@@ -28,6 +28,7 @@ from .eightball import random_response, render_eightball_widget, render_eightbal
 from .prices import GpuPricePoller, get_price
 from .debt import DebtPoller, render_debt_widget
 from .tickers import TickerPoller, render_tickers_widget
+from .moon import render_moon_widget
 from . import game_wordle
 from . import game_snake
 from . import game_roulette
@@ -463,6 +464,7 @@ def _render_widgets(
     spotify_enabled: bool, track: "dict | None", spotify_connected: bool,
     debt_enabled: bool, debt_data: "dict | None",
     tickers_enabled: bool, tickers_data: "dict",
+    moon_enabled: bool,
     term_cols: int,
 ) -> str:
     """Render all active widgets, tiling them side-by-side when space allows."""
@@ -479,6 +481,8 @@ def _render_widgets(
         fns.append(lambda w, d=debt_data: render_debt_widget(d, w))
     if tickers_enabled:
         fns.append(lambda w, d=tickers_data: render_tickers_widget(d, w))
+    if moon_enabled:
+        fns.append(lambda w: render_moon_widget(w))
 
     if not fns:
         return ""
@@ -761,6 +765,7 @@ def execute_command(
     weather_enabled: bool,
     debt_enabled: bool,
     tickers_enabled: bool,
+    moon_enabled: bool,
     term_cols: int,
     term_lines: int,
 ) -> "tuple | str":
@@ -768,7 +773,8 @@ def execute_command(
     parts = cmd.split()
     if not parts:
         return (theme, entities, entity_specs, fire_enabled, spotify_enabled,
-                sysinfo_enabled, weather_enabled, debt_enabled, tickers_enabled)
+                sysinfo_enabled, weather_enabled, debt_enabled, tickers_enabled,
+                moon_enabled)
     name = parts[0].lower()
 
     def _ok(**kw):
@@ -782,6 +788,7 @@ def execute_command(
             kw.get("weather_enabled",  weather_enabled),
             kw.get("debt_enabled",     debt_enabled),
             kw.get("tickers_enabled",  tickers_enabled),
+            kw.get("moon_enabled",     moon_enabled),
         )
 
     if name == "change-theme":
@@ -865,6 +872,12 @@ def execute_command(
         if val is not None:       return "usage: tickers [on|off]"
         return _ok(tickers_enabled=not tickers_enabled)
 
+    elif name == "moon":
+        val = parts[1].lower() if len(parts) >= 2 else None
+        if val in ("on", "off"):  return _ok(moon_enabled=val == "on")
+        if val is not None:       return "usage: moon [on|off]"
+        return _ok(moon_enabled=not moon_enabled)
+
     elif name == "8ball":
         question = " ".join(parts[1:]) if len(parts) > 1 else "?"
         return ("__8BALL__", question, random_response())
@@ -892,7 +905,7 @@ def execute_command(
     else:
         return (f"unknown command {name!r}  "
                 "try: help, change-theme, change-theme-random, killall, kill, spawn, "
-                "fire, spotify, connect-spotify, sysinfo, weather, debt, tickers, "
+                "fire, spotify, connect-spotify, sysinfo, weather, debt, tickers, moon, "
                 "8ball, play, keybind")
 
 
@@ -900,7 +913,7 @@ def execute_command(
 
 _ALL_COMMANDS = sorted([
     "change-theme", "change-theme-random", "killall", "kill", "spawn",
-    "fire", "spotify", "connect-spotify", "sysinfo", "weather", "debt", "tickers",
+    "fire", "spotify", "connect-spotify", "sysinfo", "weather", "debt", "tickers", "moon",
     "8ball", "play", "keybind", "help",
 ])
 
@@ -924,6 +937,7 @@ def _tab_completions(cmd_buf: str) -> list[str]:
         "weather":       ["on", "off"],
         "debt":          ["on", "off"],
         "tickers":       ["on", "off"],
+        "moon":          ["on", "off"],
     }
     pool = pools.get(cmd, [])
     return [x for x in pool if x.startswith(arg_prefix)]
@@ -971,7 +985,8 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             sysinfo_enabled: bool = False,
             weather_enabled: bool = False,
             debt_enabled: bool = False,
-            tickers_enabled: bool = False) -> None:
+            tickers_enabled: bool = False,
+            moon_enabled: bool = False) -> None:
     fd  = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
 
@@ -1093,6 +1108,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                 spotify_enabled,  track, spotify_client.is_connected(),
                 debt_enabled,     debt_poller.get() if debt_poller else None,
                 tickers_enabled,  ticker_poller.get() if ticker_poller else {},
+                moon_enabled,
                 term.columns,
             )
 
@@ -1170,7 +1186,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                     result = execute_command(
                         cmd_buf.strip(), theme, entities, entity_specs,
                         fire_enabled, spotify_enabled,
-                        sysinfo_enabled, weather_enabled, debt_enabled, tickers_enabled,
+                        sysinfo_enabled, weather_enabled, debt_enabled, tickers_enabled, moon_enabled,
                         term.columns, term.lines,
                     )
                     if result == "__CONNECT_SPOTIFY__":
@@ -1216,7 +1232,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                         (theme, entities, entity_specs,
                          fire_enabled, spotify_enabled,
                          sysinfo_enabled, weather_enabled, debt_enabled,
-                         tickers_enabled) = result
+                         tickers_enabled, moon_enabled) = result
                         if fire_enabled and (not fire_buf or fire_width != term.columns):
                             fire_buf   = fire_init(term.columns)
                             fire_width = term.columns
@@ -1263,7 +1279,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                     result = execute_command(
                         _keybinds[ch], theme, entities, entity_specs,
                         fire_enabled, spotify_enabled,
-                        sysinfo_enabled, weather_enabled, debt_enabled, tickers_enabled,
+                        sysinfo_enabled, weather_enabled, debt_enabled, tickers_enabled, moon_enabled,
                         term.columns, term.lines,
                     )
                     if result == "__HELP__":
@@ -1286,7 +1302,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                         (theme, entities, entity_specs,
                          fire_enabled, spotify_enabled,
                          sysinfo_enabled, weather_enabled, debt_enabled,
-                         tickers_enabled) = result
+                         tickers_enabled, moon_enabled) = result
                         if fire_enabled and (not fire_buf or fire_width != term.columns):
                             fire_buf   = fire_init(term.columns)
                             fire_width = term.columns
@@ -1336,6 +1352,8 @@ def main() -> None:
                         help="show US national debt clock widget")
     parser.add_argument("--tickers", action="store_true",
                         help="show market price ticker widget (BTC, XMR, S&P 500, NVDA)")
+    parser.add_argument("--moon", action="store_true",
+                        help="show current moon phase widget")
     parser.add_argument("--play", metavar="GAME", default="",
                         help=f"jump straight into a game: {', '.join(_GAMES)}")
     args = parser.parse_args()
@@ -1384,7 +1402,8 @@ def main() -> None:
                 sysinfo_enabled=args.sysinfo,
                 weather_enabled=args.weather,
                 debt_enabled=args.debt,
-                tickers_enabled=args.tickers)
+                tickers_enabled=args.tickers,
+                moon_enabled=args.moon)
     else:
         term   = shutil.get_terminal_size(fallback=(80, 24))
         gpus   = collect_gpus()
