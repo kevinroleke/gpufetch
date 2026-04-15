@@ -104,7 +104,7 @@ class WeatherPoller:
         try:
             req = urllib.request.Request(
                 _WEATHER_URL,
-                headers={"User-Agent": "lsgpu-weather/1.0"},
+                headers={"User-Agent": "gpufetch-weather/1.0"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 raw = json.loads(resp.read())

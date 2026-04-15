@@ -15,7 +15,7 @@ from typing import Optional
 
 REDIRECT_URI       = "http://127.0.0.1:8888/callback"
 SCOPES             = "user-read-currently-playing user-read-playback-state"
-TOKEN_FILE         = os.path.expanduser("~/.config/lsgpu/spotify.json")
+TOKEN_FILE         = os.path.expanduser("~/.config/gpufetch/spotify.json")
 POLL_INTERVAL      = 5   # seconds between /currently-playing API calls
 _DEFAULT_CLIENT_ID = "493c84a2c4bc420e944a19112158402c"
 
@@ -72,7 +72,7 @@ class SpotifyClient:
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(
-                    b"<html><body><h2>Authorized! Return to lsgpu.</h2></body></html>"
+                    b"<html><body><h2>Authorized! Return to gpufetch.</h2></body></html>"
                 )
             def log_message(self, *_):
                 pass

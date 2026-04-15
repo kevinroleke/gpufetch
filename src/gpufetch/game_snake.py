@@ -1,4 +1,4 @@
-"""Snake game for the lsgpu TUI tool."""
+"""Snake game for the gpufetch TUI tool."""
 
 import os
 import random
@@ -388,7 +388,7 @@ def play(fd: int, term_cols: int, term_lines: int) -> None:
 
     _draw_game_over(score, term_cols, term_lines)
 
-    # Wait for any key before returning to lsgpu
+    # Wait for any key before returning to gpufetch
     while True:
         k = _read_key(fd, timeout=30.0)
         if k:

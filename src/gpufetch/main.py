@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lsgpu — list connected GPUs in a terminal grid with ASCII art."""
+"""gpufetch — list connected GPUs in a terminal grid with ASCII art."""
 
 import argparse
 import os
@@ -329,7 +329,7 @@ def render_grid(gpus: list[GPUInfo], term_cols: int, frame: int = 0) -> str:
 def render_header(gpus: list[GPUInfo], term_cols: int, frame: int = 0) -> str:
     n     = len(gpus)
     spin  = SPINNER[frame % len(SPINNER)]
-    title = f" {spin} lsgpu — {n} {'GPU' if n == 1 else 'GPUs'} detected {spin} "
+    title = f" {spin} gpufetch — {n} {'GPU' if n == 1 else 'GPUs'} detected {spin} "
     pad   = max(0, term_cols - len(title)) // 2
     line  = "─" * term_cols
     return (f"{CYAN}{line}{RESET}\n"
@@ -593,14 +593,14 @@ def render_help_overlay(term_cols: int, term_lines: int,
 
     lines: list[str] = []
     lines.append(f"{colour}╔{'═' * inner}╗{RESET}")
-    lines.append(row(" lsgpu — command reference",
-                     f" {BOLD}lsgpu{RESET} — command reference"))
+    lines.append(row(" gpufetch — command reference",
+                     f" {BOLD}gpufetch{RESET} — command reference"))
     lines.append(hline())
 
     # ── Navigation ────────────────────────────────────────────────────────────
     lines.append(section("Navigation"))
-    lines.append(row("  q / ESC          quit lsgpu",
-                     f"  {BOLD}q / ESC{RESET}          quit lsgpu"))
+    lines.append(row("  q / ESC          quit gpufetch",
+                     f"  {BOLD}q / ESC{RESET}          quit gpufetch"))
     lines.append(row("  /                open command prompt",
                      f"  {BOLD}/{RESET}                open command prompt"))
     lines.append(hline())
@@ -1084,7 +1084,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                         _tui_exit(fd, old)
                         ok, msg = spotify_client.connect()
                         print(f"\n{msg}")
-                        input("\nPress Enter to return to lsgpu…")
+                        input("\nPress Enter to return to gpufetch…")
                         old = termios.tcgetattr(fd)
                         _tui_enter(fd)
                         cmd_mode = False
@@ -1208,7 +1208,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="lsgpu",
+        prog="gpufetch",
         description="List connected GPUs",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=("themes:   " + ", ".join(THEME_REGISTRY) + "\n"

@@ -1,4 +1,4 @@
-"""Wordle game for the lsgpu TUI tool.
+"""Wordle game for the gpufetch TUI tool.
 
 Launch via `/play wordle` while the alternate screen is active and the
 terminal is in raw mode.  The only public symbol is `play()`.
@@ -519,8 +519,8 @@ class _WordleUI:
 
         # Press any key
         pak_y = msg_y + 2
-        pak = f"{DIM}Press any key to return to lsgpu...{RESET}"
-        pak_plain = "Press any key to return to lsgpu..."
+        pak = f"{DIM}Press any key to return to gpufetch...{RESET}"
+        pak_plain = "Press any key to return to gpufetch..."
         pak_col = max(1, (self.tc - len(pak_plain)) // 2 + 1)
         out.append(_go(pak_y, pak_col) + pak)
 
@@ -541,7 +541,7 @@ def _update_kb(kb_state: dict[str, str], letter: str, status: str) -> None:
 
 
 def play(fd: int, term_cols: int, term_lines: int) -> None:
-    """Entry point called by lsgpu."""
+    """Entry point called by gpufetch."""
     target = _fetch_nyt_word() or random.choice(_ANSWERS)
 
     guesses: list[str] = []
@@ -563,7 +563,7 @@ def play(fd: int, term_cols: int, term_lines: int) -> None:
             continue
 
         if k == "ESC":
-            return  # exit back to lsgpu immediately
+            return  # exit back to gpufetch immediately
 
         if k in ("\r", "\n"):
             # Submit guess

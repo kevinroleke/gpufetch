@@ -1,4 +1,4 @@
-"""File-delete Russian Roulette for the lsgpu TUI tool."""
+"""File-delete Russian Roulette for the gpufetch TUI tool."""
 
 import os
 import random

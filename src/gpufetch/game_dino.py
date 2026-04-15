@@ -1,4 +1,4 @@
-"""Chrome-style dinosaur jump game for the lsgpu TUI tool."""
+"""Chrome-style dinosaur jump game for the gpufetch TUI tool."""
 
 import os
 import random
@@ -350,6 +350,6 @@ def play(fd: int, term_cols: int, term_lines: int) -> None:
         elapsed = time.monotonic() - tick_start
         time.sleep(max(0.0, _TICK - elapsed))
 
-    # Re-enable auto-wrap before returning to lsgpu
+    # Re-enable auto-wrap before returning to gpufetch
     sys.stdout.write("\033[?7h")
     sys.stdout.flush()

@@ -1,4 +1,4 @@
-"""Magic 8-ball widget for the lsgpu TUI tool."""
+"""Magic 8-ball widget for the gpufetch TUI tool."""
 
 import random
 

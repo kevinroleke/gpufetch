@@ -1,4 +1,4 @@
-"""Blackjack game for the lsgpu TUI tool."""
+"""Blackjack game for the gpufetch TUI tool."""
 
 import os
 import random
