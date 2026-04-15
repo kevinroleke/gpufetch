@@ -1,4 +1,4 @@
-# lsgpu
+# gpufetch
 
 Minimal CLI tool for displaying connected GPUs
 
