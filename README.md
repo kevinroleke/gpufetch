@@ -60,10 +60,10 @@ TUI keys: / → command prompt   q → quit   /help → command list
 
 Multiple widgets tile side-by-side automatically when the terminal is wide enough.
 
-**Entities** — ASCII art characters that bounce around the screen
+**Entities** - ASCII art characters that bounce around the screen
 `anime_girl` `arch` `bible_quote` `bill_100` `crab` `debian` `dvd` `empty_wallet` `ethereum` `fedora` `ghost` `gorilla` `greeting` `grim_reaper` `jesus` `jewish_star` `marge` `maui` `nuke` `nvidia` `rxknephew` `scrooge` `shadow_wizard` `ship` `slot_machine` `stuffed_wallet` `trophy` `tux` `ufo`
 
-**Themes** — recolour the entire UI
+**Themes** - recolour the entire UI
 `default` `america` `canada` `china` `christmas` `420` `halloween` `israel` `matrix` `rainbow`
 
 **Games** (launch with `--play <name>` or `/play <name>`)
@@ -111,10 +111,10 @@ src/gpufetch/
 ├── eightball.py      # Magic 8-ball responses and overlay
 ├── game_*.py         # Individual games (wordle, snake, roulette, blackjack)
 ├── entities/         # Bouncing ASCII art entities
-│   ├── base.py       # EntitySpec dataclass — read this before adding one
+│   ├── base.py       # EntitySpec dataclass
 │   └── *.py          # One file per entity, each exports SPEC = EntitySpec(...)
 └── themes/
-    ├── base.py       # Theme base class — read this before adding one
+    ├── base.py       # Theme base class
     └── *.py          # One file per theme, each exports THEME = MyTheme()
 ```
 
@@ -123,7 +123,6 @@ src/gpufetch/
 1. Create `src/gpufetch/entities/myname.py`
 2. Define your ASCII art as a list of frame lists (one frame = list of strings)
 3. Export `SPEC = EntitySpec(name="myname", frames=[frame1, frame2, ...], color=CYAN)`
-4. It is auto-discovered — no registration needed
 
 ```python
 from ..ansi import CYAN
@@ -140,7 +139,6 @@ SPEC = EntitySpec(name="myname", frames=[_F1, _F2], color=CYAN)
 1. Create `src/gpufetch/themes/mytheme.py`
 2. Subclass `Theme`, set `name`, override `apply(text, frame) -> str`
 3. Export `THEME = MyTheme()`
-4. Auto-discovered — no registration needed
 
 ```python
 from .base import Theme, _rgb, _theme_walk
