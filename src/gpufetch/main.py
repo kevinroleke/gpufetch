@@ -25,6 +25,7 @@ from .spotify import SpotifyClient, SpotifyPoller
 from .sysinfo import SysinfoPoller, render_sysinfo_widget
 from .weather import WeatherPoller, render_weather_widget
 from .eightball import random_response, render_eightball_widget, render_eightball_overlay
+from .prices import GpuPricePoller, get_price
 from . import game_wordle
 from . import game_snake
 from . import game_roulette
@@ -291,6 +292,14 @@ def render_card(gpu: GPUInfo, card_width: int) -> list[str]:
     if gpu.pcie_width:
         info_parts.append(f"PCIe x{gpu.pcie_width}")
     lines.append(border_row(" " + "  ".join(info_parts) if info_parts else ""))
+
+    price = get_price(gpu.name)
+    if price is not None:
+        lines.append(border_row(
+            f" SOLD {GREEN}~${price:,.0f}{RESET}{DIM}  eBay median{RESET}"
+        ))
+    else:
+        lines.append(border_row(f" SOLD {DIM}fetching…{RESET}"))
 
     lines.append(border_bot())
     return lines
@@ -953,6 +962,7 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
     spotify_poller:  "SpotifyPoller  | None" = None
     sysinfo_poller:  "SysinfoPoller  | None" = None
     weather_poller:  "WeatherPoller  | None" = None
+    price_poller:    "GpuPricePoller | None" = None
     eightball_response: "tuple[str, str] | None" = None
     eightball_question: str = ""
     eightball_flash: int = 0
@@ -1011,6 +1021,8 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             if now - last_poll >= 1.0:
                 gpus      = collect_gpus()
                 last_poll = now
+                if price_poller is None and gpus:
+                    price_poller = GpuPricePoller([g.name for g in gpus])
 
             if fire_enabled and fire_buf:
                 fire_step(fire_buf)
@@ -1201,6 +1213,8 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
         _stop_poller()
         _stop_sysinfo()
         _stop_weather()
+        if price_poller is not None:
+            price_poller.stop()
         _tui_exit(fd, old)
 
 
