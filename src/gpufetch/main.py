@@ -340,11 +340,13 @@ def render_header(gpus: list[GPUInfo], term_cols: int, frame: int = 0) -> str:
     n     = len(gpus)
     spin  = SPINNER[frame % len(SPINNER)]
     title = f" {spin} gpufetch — {n} {'GPU' if n == 1 else 'GPUs'} detected {spin} "
-    pad   = max(0, term_cols - len(title)) // 2
-    line  = "─" * term_cols
-    return (f"{CYAN}{line}{RESET}\n"
-            f"{' ' * pad}{BOLD}{CYAN}{title}{RESET}\n"
-            f"{CYAN}{line}{RESET}\n")
+    total = term_cols - 1   # -1 avoids terminal auto-wrap
+    left  = (total - len(title)) // 2
+    right = max(0, total - len(title) - left)
+    return (
+        f"{CYAN}{'─' * left}{RESET}{BOLD}{WHITE}{title}{RESET}{CYAN}{'─' * right}{RESET}\n"
+        f"{CYAN}{'─' * total}{RESET}\n"
+    )
 
 
 def render_footer(term_cols: int, last_poll_ago: float) -> str:
@@ -940,7 +942,7 @@ def _read_key(fd: int, timeout: float) -> str:
 
 def _tui_exit(fd: int, old_term) -> None:
     termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
-    sys.stdout.write("\033[?1049l\033[?25h\033[0m")
+    sys.stdout.write("\033[r\033[?1049l\033[?25h\033[0m")
     sys.stdout.flush()
 
 
@@ -1077,16 +1079,29 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             else:
                 footer = theme.apply(render_footer(term.columns, poll_age), frame)
 
-            grid_part = "\033[H" + header + grid + widget_block + "\033[J"
+            # DECSTBM: restrict scrolling to rows 3..N, permanently protecting
+            # the header rows (1-2) from any scroll that content overflow triggers.
+            # The header write at \033[1;1H is above the scroll region so it
+            # never causes scrolling itself.
+            content_part = (
+                f"\033[3;{term.lines}r"   # set scroll margins: rows 3..bottom
+                + "\033[3;1H"
+                + grid + widget_block
+                + "\033[J"
+            )
             footer_part = (
                 f"\033[{term.lines - 1};1H"
                 + footer
                 + overlay(entities, frame)
             )
-            sys.stdout.write(grid_part.replace("\r\n", "\n").replace("\n", "\r\n"))
+            # Header written last so overflow can never push it off-screen
+            header_part = "\033[1;1H" + header
+
+            sys.stdout.write(content_part.replace("\r\n", "\n").replace("\n", "\r\n"))
             if fire_enabled and fire_buf:
                 sys.stdout.write(fire_render(fire_buf, term.columns, term.lines))
             sys.stdout.write(footer_part.replace("\r\n", "\n").replace("\n", "\r\n"))
+            sys.stdout.write(header_part.replace("\r\n", "\n").replace("\n", "\r\n"))
             if eightball_flash > 0 and eightball_response is not None:
                 sys.stdout.write(render_eightball_overlay(
                     eightball_question, eightball_response,
@@ -1135,11 +1150,11 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                     elif isinstance(result, tuple) and result[0] == "__PLAY__":
                         _, game_name = result
                         # Hand off to the game; it runs until it returns
-                        sys.stdout.write("\033[2J\033[H")
+                        sys.stdout.write("\033[r\033[2J\033[H")
                         sys.stdout.flush()
                         _GAMES[game_name](fd, term.columns, term.lines)
                         # Redraw the full TUI on return
-                        sys.stdout.write("\033[2J\033[H")
+                        sys.stdout.write("\033[r\033[2J\033[H")
                         sys.stdout.flush()
                         spawned  = False   # re-spawn entities after game
                         cmd_mode = False
@@ -1212,10 +1227,10 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
                         _keybinds[key_ch2] = bound_cmd2
                     elif isinstance(result, tuple) and result[0] == "__PLAY__":
                         _, game_name = result
-                        sys.stdout.write("\033[2J\033[H")
+                        sys.stdout.write("\033[r\033[2J\033[H")
                         sys.stdout.flush()
                         _GAMES[game_name](fd, term.columns, term.lines)
-                        sys.stdout.write("\033[2J\033[H")
+                        sys.stdout.write("\033[r\033[2J\033[H")
                         sys.stdout.flush()
                         spawned = False
                     elif isinstance(result, tuple) and result[0] == "__8BALL__":
@@ -1306,7 +1321,7 @@ def main() -> None:
             _tui_enter(fd)
             try:
                 term = shutil.get_terminal_size()
-                sys.stdout.write("\033[2J\033[H")
+                sys.stdout.write("\033[r\033[2J\033[H")
                 sys.stdout.flush()
                 _GAMES[game](fd, term.columns, term.lines)
             finally:
