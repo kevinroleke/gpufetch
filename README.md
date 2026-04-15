@@ -4,6 +4,7 @@
 
 <p align="center">
     A minimal CLI tool for displaying connected GPUs
+    <img src="img/gpufetch.png" />
 </p>
 
 ---
