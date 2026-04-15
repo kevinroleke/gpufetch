@@ -1101,23 +1101,46 @@ def run_tui(theme: Theme, entity_specs: list[EntitySpec],
             else:
                 footer = theme.apply(render_footer(term.columns, poll_age), frame)
 
-            # DECSTBM: restrict scrolling to rows 3..N, permanently protecting
-            # the header rows (1-2) from any scroll that content overflow triggers.
-            # The header write at \033[1;1H is above the scroll region so it
-            # never causes scrolling itself.
+            # Layout:
+            #   Rows 1-2          → header  (written last, above scroll region)
+            #   Rows 3..N-2       → content (scroll region; clipped to fit)
+            #   Rows N-1 and N    → footer  (below scroll region, outside protection)
+            #
+            # Root cause of the vanishing ╔═══╗ bug:
+            #   Footer is 2 lines positioned at row N-1.  Its trailing \n fires
+            #   when the cursor sits at row N — the scroll-region bottom — which
+            #   scrolls everything in 3..N up one row, pushing the GPU card's
+            #   top border off the screen before the header is stamped.
+            #
+            # Fix A: set scroll region to 3..(N-2) so rows N-1/N are outside it.
+            # Fix B: strip trailing newlines from every block before writing so
+            #        no \n is ever emitted at the scroll-region bottom row.
+            # We apply both.
+
+            scroll_bot      = max(3, term.lines - 2)   # protect footer rows too
+            max_content_rows = max(1, scroll_bot - 2)  # rows 3..scroll_bot inclusive
+            content_raw   = grid + widget_block
+            content_lines = content_raw.split("\n")
+            if len(content_lines) > max_content_rows:
+                content_lines = content_lines[:max_content_rows]
+            # rstrip trailing empty lines so the last \n never lands on scroll_bot
+            while content_lines and content_lines[-1] == "":
+                content_lines.pop()
+            content_clipped = "\n".join(content_lines)
+
             content_part = (
-                f"\033[3;{term.lines}r"   # set scroll margins: rows 3..bottom
+                f"\033[3;{scroll_bot}r"   # scroll region: rows 3..N-2
                 + "\033[3;1H"
-                + grid + widget_block
+                + content_clipped
                 + "\033[J"
             )
             footer_part = (
                 f"\033[{term.lines - 1};1H"
-                + footer
+                + footer.rstrip("\n")     # never emit \n at scroll-region bottom
                 + overlay(entities, frame)
             )
-            # Header written last so overflow can never push it off-screen
-            header_part = "\033[1;1H" + header
+            # Header written last — above scroll region, immune to any scroll
+            header_part = "\033[1;1H" + header.rstrip("\n")
 
             sys.stdout.write(content_part.replace("\r\n", "\n").replace("\n", "\r\n"))
             if fire_enabled and fire_buf:
