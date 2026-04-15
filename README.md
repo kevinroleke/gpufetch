@@ -17,6 +17,10 @@ pipx:
 ```
 pipx install gpufetch
 ```
+aur:
+```
+yay -S gpufetch
+```
 
 ## Usage
 ```
