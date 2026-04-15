@@ -1,8 +1,9 @@
-<p align="center">
-    <h1 align="center">gpufetch</h1>
-    <i align="center">A minimal CLI tool for displaying connected GPUs</i>
-    <img src="img/gpufetch.png" />
-</p>
+<h1 align="center">gpufetch</h1>
+<p align="center"><i align="center">A minimal CLI tool for displaying connected GPUs</i></p>
+
+---
+
+<img src="img/gpufetch.png" />
 
 ---
 
