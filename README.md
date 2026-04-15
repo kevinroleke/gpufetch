@@ -1,5 +1,5 @@
 <h1 align="center">gpufetch</h1>
-<p align="center"><i>A GPU monitor for your terminal</i></p>
+<p align="center"><i>A minimal GPU monitor for your terminal</i></p>
 
 ---
 
