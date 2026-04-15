@@ -485,7 +485,7 @@ def _render_widgets(
 
     n   = len(fns)
     gap = 2
-    min_w = 46   # narrowest a widget still looks good at
+    min_w = 56   # narrowest a widget still looks good at (weather hourly needs ~47 inner)
 
     # How many columns can we fit?
     cols = max(1, min(n, (term_cols + gap) // (min_w + gap)))

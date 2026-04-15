@@ -219,11 +219,25 @@ def render_weather_widget(data: "dict | None", term_cols: int) -> str:
             parts_p.append(f"{t} {ico} {tf2}°F")
             parts_c.append(f"{DIM}{t}{RESET} {ico} {YELLOW}{tf2}°F{RESET}")
 
-        # join with separator, pad inside the box
-        separator   = "   "
-        hourly_p    = "  " + separator.join(parts_p)
-        hourly_col  = "  " + separator.join(parts_c)
-        lines.append(row(hourly_p, hourly_col))
+        # Only include as many entries as actually fit; each entry is
+        # separated by "   " (3 chars), with a leading 2-char indent.
+        separator = "   "
+        sep_len   = len(separator)
+        visible_p: list[str] = []
+        visible_c: list[str] = []
+        running = 2  # "  " prefix
+        for p, c in zip(parts_p, parts_c):
+            needed = len(p) + (sep_len if visible_p else 0)
+            if running + needed > inner:
+                break
+            visible_p.append(p)
+            visible_c.append(c)
+            running += needed
+
+        if visible_p:
+            hourly_p   = "  " + separator.join(visible_p)
+            hourly_col = "  " + separator.join(visible_c)
+            lines.append(row(hourly_p, hourly_col))
 
     lines.append(bot())
     return "\n".join(lines) + "\n"

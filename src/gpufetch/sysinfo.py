@@ -186,49 +186,6 @@ def render_sysinfo_widget(data: "dict | None", term_cols: int) -> str:
     )
     lines.append(row(cpu_plain, cpu_colored))
 
-    # ── per-CPU cores (two-column layout, max 2 rows each side) ──────────────
-
-    per_cpu: list[float] = data.get("per_cpu", [])
-    if per_cpu:
-        # We show at most 4 cores (2 rows x 2 columns).
-        # Each core cell: "C00 ██░ 100%" — 14 chars wide.
-        # Two cells + separator fit inside inner when inner >= ~30.
-        max_cores   = min(len(per_cpu), 4)
-        half        = (max_cores + 1) // 2  # cores in left column
-
-        cell_bar_w  = 4  # tiny bar inside each cell
-        # cell format: " C<n> ████  99%" → 16 chars
-        cell_width  = 16
-
-        two_col = inner >= cell_width * 2 + 2
-
-        for row_idx in range(half):
-            left_i  = row_idx
-            right_i = row_idx + half
-
-            # left cell
-            ci      = left_i
-            pct_l   = per_cpu[ci]
-            bar_l   = _bar(pct_l, 100.0, cell_bar_w)
-            col_l   = GREEN if pct_l < 60 else YELLOW if pct_l < 85 else RED
-            plain_l = f" C{ci:<2} {'█' * cell_bar_w} {pct_l:>4.0f}%"
-            color_l = f" {DIM}C{ci:<2}{RESET} {bar_l} {col_l}{pct_l:>4.0f}%{RESET}"
-
-            if two_col and right_i < len(per_cpu):
-                ci      = right_i
-                pct_r   = per_cpu[ci]
-                bar_r   = _bar(pct_r, 100.0, cell_bar_w)
-                col_r   = GREEN if pct_r < 60 else YELLOW if pct_r < 85 else RED
-                plain_r = f" C{ci:<2} {'█' * cell_bar_w} {pct_r:>4.0f}%"
-                color_r = f" {DIM}C{ci:<2}{RESET} {bar_r} {col_r}{pct_r:>4.0f}%{RESET}"
-                # combine: left fills cell_width chars, then right
-                pad_between = inner - len(strip_ansi(plain_l)) - len(strip_ansi(plain_r))
-                combined_plain  = plain_l + " " * max(0, pad_between) + plain_r
-                combined_color  = color_l + " " * max(0, pad_between) + color_r
-                lines.append(row(combined_plain, combined_color))
-            else:
-                lines.append(row(plain_l, color_l))
-
     # ── memory ────────────────────────────────────────────────────────────────
 
     mem_total = data["mem_total_mib"]
