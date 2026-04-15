@@ -36,6 +36,7 @@ options:
   --weather            show weather widget
   --debt               show US national debt clock widget
   --tickers            show market price ticker widget (BTC, XMR, S&P 500, NVDA)
+  --moon               show current moon phase widget
   --play GAME          jump straight into a game: wordle, snake, roulette, blackjack
 
 TUI keys: / → command prompt   q → quit   /help → command list
@@ -56,6 +57,7 @@ TUI keys: / → command prompt   q → quit   /help → command list
 | `--weather` | `/weather` | Temperature, conditions, wind, hourly forecast (wttr.in) |
 | `--spotify` | `/spotify` | Now-playing track, artist, progress bar |
 | `--debt` | `/debt` | US national debt counter ticking in real time |
+| `--moon` | `/moon` | ASCII art of the current moon phase |
 | `--tickers` | `/tickers` | BTC/USD, XMR/USD, S&P 500, NVDA with 24 h change % |
 
 Multiple widgets tile side-by-side automatically when the terminal is wide enough.
